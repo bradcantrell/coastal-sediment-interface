@@ -155,6 +155,9 @@ try {
     breakDepth: typeof breakDepth!=='undefined' ? breakDepth : null,
     H: typeof waveH!=='undefined' ? waveH : null,
     D: typeof waveDepth!=='undefined' ? waveDepth : null,
+    U: typeof u!=='undefined' ? u : null,
+    P: typeof particles!=='undefined' ? particles : null,
+
     morph: typeof morphGrid!=='undefined' ? morphGrid : null,
     storm: typeof stormNow!=='undefined' ? stormNow : null,
     bar: typeof barDistanceM!=='undefined' ? barDistanceM : null,
@@ -165,8 +168,10 @@ try {
   eq: typeof equilibriumZ==='function' ? equilibriumZ : null,
   deanA: typeof deanA==='function' ? deanA : null,
   morphStep: typeof morphologyStep==='function' ? morphologyStep : null,
+  updateParticles: typeof updateParticles==='function' ? updateParticles : null,
+  tick: (dt) => { if (typeof simTime === 'number') simTime += dt; },
   resetMorph: typeof resetMorphology==='function' ? resetMorphology : null,
-  shorelineYPx: typeof shorelineYPx==='function' ? shorelineYPx : null,
+  shorelineYPx: typeof shorelineXPx==='function' ? shorelineXPx : null,
   shoreRef: typeof shoreRefAt==='function' ? shoreRefAt : null,
   barDist: typeof computeBarDistance==='function' ? computeBarDistance : null,
   dims: {
@@ -324,24 +329,25 @@ check(nan === 0, "no NaN with a small wave", `${nan} bad cells`);
 // ============================================================ PHASE 2: morphology
 console.log("\n=== morphology ===");
 const D = app.dims;
-const yMPerPx = D.cross / 800;
-const CXC = Math.floor(D.gw / 2) * 4;          // a column in pixels
+const VIEW_W = 1200, VIEW_H = 800;
+const xMPerPx = D.cross / VIEW_W;               // cross-shore metres per pixel
+const ROW = 400;                                // a fixed alongshore row, in pixels
+const GROW = Math.floor(ROW / 4);               // same row in morph-grid units
 
 const calmCond = () => { st.cond.Hs = 1.2; st.cond.Tp = 8.0; st.cond.waterLevel = 0; st.cond.slope = 0.02; st.cond.d50 = 0.30; };
 const stormCond = () => { st.cond.Hs = 3.4; st.cond.Tp = 12.0; st.cond.waterLevel = 0.8; st.cond.slope = 0.02; st.cond.d50 = 0.30; };
 
-function zM(yPx) { return app.bedZ(CXC, yPx) * D.mpbu; }
+function zM(xPx) { return app.bedZ(xPx, ROW) * D.mpbu; }
 
 function meanDeviation() {
-  const yS = app.shoreRef(Math.floor(D.gw / 2));
-  if (yS === null) return NaN;
+  const xS = app.shoreRef(GROW);
+  if (xS === null) return NaN;
   const A = app.deanA(st.cond.d50);
   let sum = 0, n = 0;
-  for (let gy = 0; gy < D.gh; gy += 3) {
-    const y = (gy + 0.5) * 4;
-    const Y = (yS - y) * yMPerPx;
+  for (let x = 4; x < VIEW_W; x += 12) {
+    const Y = (xS - x) * xMPerPx;
     if (Y < 8) continue;
-    sum += Math.abs(zM(y) - app.eq(Y, app.getState().storm, A));
+    sum += Math.abs(zM(x) - app.eq(Y, app.getState().storm, A));
     n++;
   }
   return n ? sum / n : NaN;
@@ -356,8 +362,8 @@ for (let i = 0; i < 30; i++) app.morphStep(STEP);          // settle
 const devSettled = meanDeviation();
 
 // perturb: raise a band of the offshore profile by 40 bed units (2.0 m)
-for (let gy = Math.floor(D.gh * 0.35); gy < Math.floor(D.gh * 0.65); gy++) {
-  for (let gx = 0; gx < D.gw; gx++) app.getState().morph[gy * D.gw + gx] += 40;
+for (let gx = Math.floor(D.gw * 0.35); gx < Math.floor(D.gw * 0.65); gx++) {
+  for (let gy = 0; gy < D.gh; gy++) app.getState().morph[gy * D.gw + gx] += 40;
 }
 const devPerturbed = meanDeviation();
 for (let i = 0; i < 25; i++) app.morphStep(STEP);
@@ -373,35 +379,79 @@ calmCond(); app.waveFieldStep(); app.barDist();
 app.resetMorph();
 for (let i = 0; i < 30; i++) app.morphStep(STEP);
 
-const yShore0 = app.shoreRef(Math.floor(D.gw / 2));
-const upperY = yShore0 + 8 / yMPerPx;           // 8 m landward of the calm waterline
-const zUpper0 = zM(upperY);
+const xShore0 = app.shoreRef(GROW);
+const upperX = xShore0 + 8 / xMPerPx;           // 8 m landward of the calm waterline
+const zUpper0 = zM(upperX);
 
 // The storm bar forms where the STORM breaks, far further out than the calm bar.
-// Establish that position first, then read the pre-storm bed there.
 stormCond(); app.waveFieldStep(); app.barDist();
 const barDistStorm = app.getState().bar;
-const barY = yShore0 - barDistStorm / yMPerPx;
-const zBar0 = zM(barY);
+const barX = xShore0 - barDistStorm / xMPerPx;
+const zBar0 = zM(barX);
 
 for (let i = 0; i < 20; i++) app.morphStep(STEP);
-const zUpper1 = zM(upperY), zBar1 = zM(barY);
+const zUpper1 = zM(upperX), zBar1 = zM(barX);
 console.log(`Gate B  storm bar ${barDistStorm.toFixed(1)} m offshore, intensity ${app.getState().storm.toFixed(2)}`);
 console.log(`        upper profile ${zUpper0.toFixed(2)} -> ${zUpper1.toFixed(2)} m (${(zUpper1 - zUpper0).toFixed(2)})`);
 console.log(`        bar crest     ${zBar0.toFixed(2)} -> ${zBar1.toFixed(2)} m (${(zBar1 - zBar0).toFixed(2)})`);
 
 check(app.getState().storm > 0.3, "storm preset registers as a storm", app.getState().storm.toFixed(2));
-check(zUpper1 < zUpper0, "storm erodes the upper profile",
-      `${(zUpper1 - zUpper0).toFixed(2)} m`);
-check(zBar1 > zBar0, "storm builds a bar at the breakpoint",
-      `${(zBar1 - zBar0).toFixed(2)} m`);
+check(zUpper1 < zUpper0, "storm erodes the upper profile", `${(zUpper1 - zUpper0).toFixed(2)} m`);
+check(zBar1 > zBar0, "storm builds a bar at the breakpoint", `${(zBar1 - zBar0).toFixed(2)} m`);
 
 // --- and the bar decays again once the storm passes
 calmCond(); app.waveFieldStep(); app.barDist();
 for (let i = 0; i < 25; i++) app.morphStep(STEP);
-const zBar2 = zM(barY);
+const zBar2 = zM(barX);
 console.log(`        after calm ${zBar2.toFixed(2)} m (recovery ${(zBar2 - zBar1).toFixed(2)})`);
 check(zBar2 < zBar1, "bar decays after the storm", `${(zBar2 - zBar1).toFixed(2)} m`);
+
+// --- orientation: the waterline must sit in the right third
+calmCond(); app.waveFieldStep(); app.barDist();
+app.resetMorph();
+const xShoreFinal = app.shoreRef(GROW);
+const frac = xShoreFinal / VIEW_W;
+console.log(`\n=== orientation ===`);
+console.log(`waterline at x=${xShoreFinal.toFixed(0)}px (${(frac * 100).toFixed(0)}% of width)`);
+check(frac > 0.66 && frac < 0.90, "waterline in the right third", `${(frac * 100).toFixed(0)}%`);
+
+const uField = app.getState().U;
+let velCells = 0;
+for (let i = 0; i < uField.length; i++) if (isFinite(uField[i]) && uField[i] !== 0) velCells++;
+console.log(`velocity field populated in ${velCells} cells`);
+check(velCells > 500, "velocity field populated", `${velCells} cells`);
+
+// --- particles must actually travel from the offshore edge toward the shore
+console.log(`\n=== particles ===`);
+calmCond(); app.waveFieldStep();
+{
+  const ps = app.getState().P;
+  const meanBefore = ps.reduce((a, p) => a + p.x, 0) / ps.length;
+  let maxX = 0;
+  for (const p of ps) if (p.x > maxX) maxX = p.x;
+  const xShore = app.shoreRef(GROW);
+  console.log(`${ps.length} particles, mean x ${meanBefore.toFixed(0)} px, max x ${maxX.toFixed(0)} px`);
+  console.log(`waterline at ${xShore.toFixed(0)} px`);
+
+  // Spread: particles must cover open water, not sit in a band at the left edge.
+  check(meanBefore > 200, "particles spread across the water", `mean x ${meanBefore.toFixed(0)} px`);
+  check(maxX > 500, "particles reach the outer surf zone", `max x ${maxX.toFixed(0)} px`);
+
+  // Net flow: average the onshore component over a FULL wave period. A single frame sits
+  // at one phase of the oscillation and can legitimately point either way; the drift only
+  // shows up when the cycle averages out.
+  let acc = 0, cnt = 0;
+  const steps = 24, dtPer = st.cond.Tp / steps;
+  for (let k = 0; k < steps; k++) {
+    app.tick(dtPer);
+    app.waveFieldStep();
+    const uf = app.getState().U;
+    for (let i = 0; i < uf.length; i++) if (isFinite(uf[i]) && uf[i] !== 0) { acc += uf[i]; cnt++; }
+  }
+  const meanU = acc / cnt;
+  console.log(`period-averaged onshore component ${meanU.toFixed(3)} cells/frame over ${cnt} samples`);
+  check(meanU > 0, "net flow is onshore", `${meanU.toFixed(3)} cells/frame`);
+}
 
 console.log("");
 if (failures === 0) console.log("HARNESS PASS");

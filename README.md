@@ -58,10 +58,17 @@ changes: the beach face flattens and cuts back, and a bar forms at the breakpoin
 are driven by the same storm intensity, so they stay coupled — which is why a storm digs
 the upper beach and piles the sand into a bar, and why the bar decays once the storm passes.
 
-## Units
+## Units and orientation
 
-Metres and seconds throughout. Reach is 400 m alongshore × 300 m cross-shore; bed
-elevations are stored in bed units at `M_PER_BED_UNIT = 0.05` m per unit.
+Metres and seconds throughout. **Cross-shore runs along x** — offshore at the left edge,
+waterline at 74% of the width, dune at the right. Wave energy marches in from the left, so
+the right third of the window is beach. The alongshore extent is y: 400 m of shore, 300 m
+of profile. Bed elevations are stored in bed units at `M_PER_BED_UNIT = 0.05` m per unit.
+
+Velocities are stored in cells per frame for the particle system, with a `VEL_GAIN` of 120
+so orbital motion reads at a human scale; the bed physics uses metres and seconds. The
+`+0.6` bias on the oscillating term is a stand-in for Stokes drift — without it the
+particles slosh in place and the water reads as static.
 
 ## Running
 
@@ -87,13 +94,16 @@ seven weighted components, obliquity lowers the peak, no NaN at the small-wave l
 Current run:
 
 ```
-field: 11360 wet cells, max depth 8.00 m, max H 1.50 m, mean H 1.143 m
+field: 10710 wet cells, max depth 8.00 m, max H 1.51 m, mean H 1.151 m
 runup R2 0.476 m, Iribarren 0.183
-storm: break 3.48 m @ 4.47 m, runup 1.20 m, max H 3.68 m
-Gate A  settled 0.074 m | perturbed 0.803 m -> relaxed 0.035 m
-Gate B  storm bar 179.3 m offshore, intensity 0.62
-        upper profile 0.17 -> -0.33 m (-0.50)
-        bar crest     -3.95 -> -3.18 m (0.77)
+storm: break 3.68 m @ 4.81 m, runup 1.20 m, max H 3.68 m
+Gate A  settled 0.078 m | perturbed 0.854 m -> relaxed 0.038 m
+Gate B  storm bar 181.7 m offshore, intensity 0.62
+        upper profile 0.16 -> -0.33 m (-0.49)
+        bar crest     -3.99 -> -3.22 m (0.77)
+orientation: waterline at 74% of width
+particles: mean x 423 px, max x 840 px
+period-averaged onshore component 0.488 cells/frame
 HARNESS PASS
 ```
 

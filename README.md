@@ -13,22 +13,38 @@ deliberate — everything past it is what the case export is for.
 
 ## Status
 
-**Phase 0 — scaffold and parity.** The interface shell is in place, derived from the
-fluvial Sediment Interface: all panels, particles, bed grids, obstacle choreography and
-timeline carry over. The Stam fluid solver has been removed and replaced with a coastal
-wave field (linear shoaling with a breaking cap). The coastal-conditions panel, refraction,
-surf-zone dissipation, transport laws and the XBeach export are **not built yet**.
+**Phase 1 — wave transformation.** The interface shell carries over from the fluvial
+Sediment Interface: all panels, particles, bed grids, obstacle choreography and timeline.
+The Stam fluid solver is gone. In its place is a column-by-column wave transformation with
+refraction, shoaling, breaking dissipation and runup, driven by a coastal-conditions panel.
+
+Sediment transport and morphology are **not built yet** (Phases 2–3). Today the wave field
+is correct and the sand does not yet respond to it.
 
 See `PLAN.md` for the full design and the phase gates.
 
-## What works today
+## Physics
 
-- Loads and runs; every inherited control responds
-- Default archetype beach profile: offshore shelf, shoreface, beach face, berm, dune
-- Wave field: linear-dispersion group velocity, shoaling by energy-flux conservation,
-  breaking at `H ≤ γh` with `γ = 0.78`
-- Obstacles and the looping timeline, unchanged from the fluvial interface
-- Headless test harness (`dev/headless_harness.js`)
+| Process | Method |
+|---|---|
+| Dispersion | Newton solution of ω² = gk·tanh(kh) |
+| Refraction | Snell, alongshore wavenumber k·sinθ conserved |
+| Shoaling | Energy-flux conservation on the oblique flux Cg·cosθ |
+| Breaking | Battjes & Janssen (1978), γ = 0.78, Qb = exp(−(γh/Hrms)²) |
+| Runup | Stockdon et al. (2006), R2 on a plane foreshore |
+| Wave input | 1 component (monochromatic) or 7 wrapped-Gaussian directional bins |
+
+**Not modelled:** diffraction (a structure casts a hard shadow), wave setup in the bed,
+infragravity. Breaking dissipation is applied as an energy decay per cell rather than a
+full roller model.
+
+## Conditions panel
+
+Wave height, period, direction and directional spread; water level; sea-level rise; D50;
+foreshore slope. Presets: calm summer, winter storm, post-storm recovery, SLR 2100.
+
+The readout reports breaking wave height and depth, Stockdon runup, the Iribarren number
+and the breaker type (spilling / plunging / surging).
 
 ## Units
 
@@ -40,24 +56,33 @@ elevations are stored in bed units at `M_PER_BED_UNIT = 0.05` m per unit.
 Static file, no build step:
 
 ```
-python -m http.server 8100
+python -m http.server 8102
 ```
 
-then open <http://localhost:8100/>.
+then open <http://localhost:8102/>.
 
 ## Testing
 
 ```
-# syntax
-python -c "import re;s=open('index.html',encoding='utf-8').read();open('_check.js','w',encoding='utf-8').write(re.search(r'<script>\s*\n(.*?)\n</script>',s,re.S).group(1))"
-node --check _check.js
-
-# behaviour (mocks p5 + DOM, runs setup() and 30 frames, asserts a live wave field)
-node dev/headless_harness.js _check.js
+node dev/headless_harness.js index.html
 ```
 
-A passing run prints the wet-cell count, maximum depth and maximum wave height, e.g.
-`11040 wet cells, 3864 dry, max depth 8.00 m, max H 1.51 m`.
+The harness parses the real markup, mocks p5 and the DOM, seeds every control from its
+`value=""` default, runs `setup()` and 30 frames, then asserts the field is live and
+responds correctly to its controls — storm breaks deeper than calm, spread expands to
+seven weighted components, obliquity lowers the peak, no NaN at the small-wave limit.
+
+Current run:
+
+```
+field: 11040 wet cells, max depth 8.00 m, max H 1.51 m, mean H 1.054 m
+runup R2 0.476 m, Iribarren 0.183
+storm: break 3.48 m @ 4.47 m, runup 1.20 m, max H 3.68 m
+HARNESS PASS
+```
+
+Note: extracting the script and running `node --check` alone is **not** sufficient — it
+passes on a field that is silently empty. The behavioural checks are the real gate.
 
 ## License
 

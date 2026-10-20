@@ -155,7 +155,59 @@ try {
     breakDepth: typeof breakDepth!=='undefined' ? breakDepth : null,
     H: typeof waveH!=='undefined' ? waveH : null,
     D: typeof waveDepth!=='undefined' ? waveDepth : null,
+    morph: typeof morphGrid!=='undefined' ? morphGrid : null,
+    storm: typeof stormNow!=='undefined' ? stormNow : null,
+    bar: typeof barDistanceM!=='undefined' ? barDistanceM : null,
   }),
+  bedZ: typeof bedZ==='function' ? bedZ : null,
+  bedZ0: typeof bedZ0==='function' ? bedZ0 : null,
+  morphZFn: typeof morphZ==='function' ? morphZ : null,
+  eq: typeof equilibriumZ==='function' ? equilibriumZ : null,
+  deanA: typeof deanA==='function' ? deanA : null,
+  morphStep: typeof morphologyStep==='function' ? morphologyStep : null,
+  resetMorph: typeof resetMorphology==='function' ? resetMorphology : null,
+  shorelineYPx: typeof shorelineYPx==='function' ? shorelineYPx : null,
+  shoreRef: typeof shoreRefAt==='function' ? shoreRefAt : null,
+  barDist: typeof computeBarDistance==='function' ? computeBarDistance : null,
+  dims: {
+    get along() { return typeof REACH_ALONGSHORE !== 'undefined' ? REACH_ALONGSHORE : 400; },
+    get cross() { return typeof REACH_CROSSSHORE !== 'undefined' ? REACH_CROSSSHORE : 300; },
+    get mpbu()  { return typeof M_PER_BED_UNIT !== 'undefined' ? M_PER_BED_UNIT : 0.05; },
+    // GW and GH are assigned in setup(), so these must be live getters, not a snapshot
+    get gw()    { return typeof GW !== 'undefined' ? GW : 0; },
+    get gh()    { return typeof GH !== 'undefined' ? GH : 0; },
+  },
+  probeMorphZ: (x, y) => {
+    const fx = x / DEPO_CELL - 0.5, fy = y / DEPO_CELL - 0.5;
+    const i = Math.floor(fx), j = Math.floor(fy);
+    const inb = !(i < 0 || j < 0 || i >= GW - 1 || j >= GH - 1);
+    return { DEPO_CELL, GW, GH, fx, fy, i, j, inb,
+             a: morphGrid ? morphGrid[j * GW + i] : null,
+             d: morphGrid ? morphGrid[(j + 1) * GW + i + 1] : null,
+             gridNull: !morphGrid };
+  },
+  diag: () => {
+    const out = {
+      enabled: typeof morphEnabled!=='undefined' ? morphEnabled : null,
+      len: morphGrid ? morphGrid.length : -1,
+      nonzero: 0, nan: 0, cols: 0, shoreNull: 0, shoreFirst: null,
+      storm: typeof stormNow!=='undefined' ? stormNow : null,
+      bar: typeof barDistanceM!=='undefined' ? barDistanceM : null,
+      relaxDays: typeof relaxDays!=='undefined' ? relaxDays : null,
+    };
+    if (morphGrid) for (let i = 0; i < morphGrid.length; i++) {
+      if (!isFinite(morphGrid[i])) out.nan++; else if (morphGrid[i] !== 0) out.nonzero++;
+    }
+    if (typeof shorelineYPx === 'function' && typeof GW !== 'undefined') {
+      for (let gx = 0; gx < GW; gx += 10) {
+        out.cols++;
+        const s = shorelineYPx(gx);
+        if (s === null) out.shoreNull++;
+        else if (out.shoreFirst === null) out.shoreFirst = s;
+      }
+    }
+    return out;
+  },
 };
 `)();
 } catch (e) {
@@ -268,6 +320,88 @@ for (let i = 0; i < tiny.H.length; i++) if (!isFinite(tiny.H[i])) nan++;
 console.log("\n--- edge case: Hs 0.1 m ---");
 console.log(`runup ${tiny.runup.toFixed(3)} m, NaN cells ${nan}`);
 check(nan === 0, "no NaN with a small wave", `${nan} bad cells`);
+
+// ============================================================ PHASE 2: morphology
+console.log("\n=== morphology ===");
+const D = app.dims;
+const yMPerPx = D.cross / 800;
+const CXC = Math.floor(D.gw / 2) * 4;          // a column in pixels
+
+const calmCond = () => { st.cond.Hs = 1.2; st.cond.Tp = 8.0; st.cond.waterLevel = 0; st.cond.slope = 0.02; st.cond.d50 = 0.30; };
+const stormCond = () => { st.cond.Hs = 3.4; st.cond.Tp = 12.0; st.cond.waterLevel = 0.8; st.cond.slope = 0.02; st.cond.d50 = 0.30; };
+
+function zM(yPx) { return app.bedZ(CXC, yPx) * D.mpbu; }
+
+function meanDeviation() {
+  const yS = app.shoreRef(Math.floor(D.gw / 2));
+  if (yS === null) return NaN;
+  const A = app.deanA(st.cond.d50);
+  let sum = 0, n = 0;
+  for (let gy = 0; gy < D.gh; gy += 3) {
+    const y = (gy + 0.5) * 4;
+    const Y = (yS - y) * yMPerPx;
+    if (Y < 8) continue;
+    sum += Math.abs(zM(y) - app.eq(Y, app.getState().storm, A));
+    n++;
+  }
+  return n ? sum / n : NaN;
+}
+
+const STEP = 86400 * 5;   // 5 model days per call
+
+// --- Gate A: a perturbed profile relaxes toward Dean
+calmCond(); app.waveFieldStep(); app.barDist();
+app.resetMorph();
+for (let i = 0; i < 30; i++) app.morphStep(STEP);          // settle
+const devSettled = meanDeviation();
+
+// perturb: raise a band of the offshore profile by 40 bed units (2.0 m)
+for (let gy = Math.floor(D.gh * 0.35); gy < Math.floor(D.gh * 0.65); gy++) {
+  for (let gx = 0; gx < D.gw; gx++) app.getState().morph[gy * D.gw + gx] += 40;
+}
+const devPerturbed = meanDeviation();
+for (let i = 0; i < 25; i++) app.morphStep(STEP);
+const devRelaxed = meanDeviation();
+
+console.log(`Gate A  settled ${devSettled.toFixed(3)} m | perturbed ${devPerturbed.toFixed(3)} m -> relaxed ${devRelaxed.toFixed(3)} m`);
+check(devPerturbed > devSettled * 1.5, "perturbation actually perturbs", `${devPerturbed.toFixed(3)} m`);
+check(devRelaxed < devPerturbed * 0.75, "profile relaxes back toward Dean",
+      `${devRelaxed.toFixed(3)} < ${(devPerturbed * 0.75).toFixed(3)} m`);
+
+// --- Gate B: a storm pulse erodes the upper profile and builds a bar
+calmCond(); app.waveFieldStep(); app.barDist();
+app.resetMorph();
+for (let i = 0; i < 30; i++) app.morphStep(STEP);
+
+const yShore0 = app.shoreRef(Math.floor(D.gw / 2));
+const upperY = yShore0 + 8 / yMPerPx;           // 8 m landward of the calm waterline
+const zUpper0 = zM(upperY);
+
+// The storm bar forms where the STORM breaks, far further out than the calm bar.
+// Establish that position first, then read the pre-storm bed there.
+stormCond(); app.waveFieldStep(); app.barDist();
+const barDistStorm = app.getState().bar;
+const barY = yShore0 - barDistStorm / yMPerPx;
+const zBar0 = zM(barY);
+
+for (let i = 0; i < 20; i++) app.morphStep(STEP);
+const zUpper1 = zM(upperY), zBar1 = zM(barY);
+console.log(`Gate B  storm bar ${barDistStorm.toFixed(1)} m offshore, intensity ${app.getState().storm.toFixed(2)}`);
+console.log(`        upper profile ${zUpper0.toFixed(2)} -> ${zUpper1.toFixed(2)} m (${(zUpper1 - zUpper0).toFixed(2)})`);
+console.log(`        bar crest     ${zBar0.toFixed(2)} -> ${zBar1.toFixed(2)} m (${(zBar1 - zBar0).toFixed(2)})`);
+
+check(app.getState().storm > 0.3, "storm preset registers as a storm", app.getState().storm.toFixed(2));
+check(zUpper1 < zUpper0, "storm erodes the upper profile",
+      `${(zUpper1 - zUpper0).toFixed(2)} m`);
+check(zBar1 > zBar0, "storm builds a bar at the breakpoint",
+      `${(zBar1 - zBar0).toFixed(2)} m`);
+
+// --- and the bar decays again once the storm passes
+calmCond(); app.waveFieldStep(); app.barDist();
+for (let i = 0; i < 25; i++) app.morphStep(STEP);
+const zBar2 = zM(barY);
+console.log(`        after calm ${zBar2.toFixed(2)} m (recovery ${(zBar2 - zBar1).toFixed(2)})`);
+check(zBar2 < zBar1, "bar decays after the storm", `${(zBar2 - zBar1).toFixed(2)} m`);
 
 console.log("");
 if (failures === 0) console.log("HARNESS PASS");

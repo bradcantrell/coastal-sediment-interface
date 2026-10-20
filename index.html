@@ -155,6 +155,14 @@
       <span id="ro-zone">–</span>
     </div>
 
+    <div class="sect-label">morphology <button class="reset-btn" id="reset-morph">clear</button></div>
+    <div class="ctrl-row"><label>model rate <span class="val" id="mrate-val">2.0</span> d/s</label><input type="range" id="m-rate" min="0.1" max="30" value="2" step="0.1"></div>
+    <div class="ctrl-row"><label>response <span class="val" id="relax-val">40</span> d</label><input type="range" id="m-relax" min="5" max="180" value="40" step="5"></div>
+    <div id="morph-readout" style="font-size:9px;color:rgba(255,190,120,0.6);line-height:1.5;margin:4px 0 3px 0;font-variant-numeric:tabular-nums;">
+      erosion <span id="ro-er">0.00</span> m &nbsp; accretion <span id="ro-ac">0.00</span> m<br>
+      storm <span id="ro-storm">0.00</span> &nbsp; bar at <span id="ro-bar">–</span> m
+    </div>
+
     <div class="sect-label">physics <button class="reset-btn" id="reset-physics">reset</button></div>
     <div class="ctrl-row"><label>inflow <span class="val" id="inflow-val">2.5</span></label><input type="range" id="inflow" min="0.5" max="5" value="2.5" step="0.1"></div>
     <div class="ctrl-row"><label>settle thresh <span class="val" id="settle-thresh-val">0.20</span></label><input type="range" id="settle-thresh" min="0.05" max="0.8" value="0.20" step="0.01"></div>
@@ -333,11 +341,13 @@ function getStationZ(station, y) {
  */
 function defaultCoastalBedZ(x, y) {
   const t = y / Math.max(height, 1);
-  if (t < 0.42) return -160;                                   // offshore shelf  (-8.0 m)
-  if (t < 0.60) return -160 + (t - 0.42) / 0.18 * 140;         // shoreface rise
-  if (t < 0.76) return  -20 + (t - 0.60) / 0.16 *  20;         // beach face (waterline at 0)
-  if (t < 0.86) return   30 + (t - 0.76) / 0.10 *  30;         // berm             (+1.5 m)
-  return 120 + (t - 0.86) / 0.14 * 60;                         // dune crest       (+6.0 m)
+  // Continuous by construction: every segment starts where the last one ended, or the
+  // waterline cannot migrate and the profile cannot respond to a change in water level.
+  if (t < 0.42) return -160;                                  // offshore shelf   -8.0 m
+  if (t < 0.62) return -160 + (t - 0.42) / 0.20 * 120;        // shoreface        -8.0 -> -2.0
+  if (t < 0.78) return  -40 + (t - 0.62) / 0.16 *  40;        // beach face       -2.0 ->  0.0
+  if (t < 0.88) return    0 + (t - 0.78) / 0.10 *  30;        // berm              0.0 ->  1.5
+  return                 30 + (t - 0.88) / 0.12 * 120;        // dune              1.5 ->  7.5
 }
 
 function computeUserBedZ(x, y) {
@@ -378,7 +388,13 @@ function rebuildUserBedGrid() {
 }
 
 // Combined bed height = user-drawn bed + accumulated deposition (aggradation).
-function bedZ(x, y) { return userBedZ(x, y) + depoZ(x, y); }
+function bedZ(x, y) { return userBedZ(x, y) + depoZ(x, y) + morphZ(x, y); }
+
+// The bed without the morphology layer. The equilibrium profile is referenced to the
+// waterline of THIS surface, not the evolving one: a Dean profile anchored at its own
+// moving shoreline is degenerate, so re-anchoring each step makes the target chase the
+// bed and diverge.
+function bedZ0(x, y) { return userBedZ(x, y) + depoZ(x, y); }
 
 function depoZ(x, y) {
   if (!depoGrid) return 0;
@@ -388,6 +404,19 @@ function depoZ(x, y) {
   let tx = fx - i, ty = fy - j;
   let a = depoGrid[j * GW + i], b = depoGrid[j * GW + i + 1];
   let c = depoGrid[(j + 1) * GW + i], d = depoGrid[(j + 1) * GW + i + 1];
+  return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+}
+
+// Signed morphology change, same grid as depoGrid. Separated from depoGrid because
+// deposition is clamped to [0, DEPO_MAX] and cannot represent erosion.
+function morphZ(x, y) {
+  if (!morphGrid) return 0;
+  let fx = x / DEPO_CELL - 0.5, fy = y / DEPO_CELL - 0.5;
+  let i = Math.floor(fx), j = Math.floor(fy);
+  if (i < 0 || j < 0 || i >= GW - 1 || j >= GH - 1) return 0;
+  let tx = fx - i, ty = fy - j;
+  let a = morphGrid[j * GW + i],     b = morphGrid[j * GW + i + 1];
+  let c = morphGrid[(j + 1) * GW + i], d = morphGrid[(j + 1) * GW + i + 1];
   return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
 }
 
@@ -643,6 +672,191 @@ function waveFieldStep() {
   combineComponents();
   applyField();
   computeRunup();
+}
+
+// ─────────────────────────────────────────────
+// CROSS-SHORE RESPONSE  (Phase 2)
+// ─────────────────────────────────────────────
+// Exner continuity with a relaxed equilibrium profile:
+//
+//   dz/dt = (z_eq - z) / T
+//
+// z_eq is the Dean profile h = A*y^(2/3) offshore, continued at the foreshore gradient
+// on land. A comes from the settling velocity of the bed material (Soulsby 1997), so
+// grain size controls the profile shape.
+//
+// Under wave energy z_eq is modified: the subaerial foreshore flattens (erosion of the
+// upper profile) and a bar appears at the breakpoint (deposition where the waves break).
+// Both are driven by the same storm intensity, so the two responses stay coupled.
+//
+// Limitation, stated plainly: relaxation is a target-seeking model, not a flux-conserving
+// one. It does not conserve volume exactly. Volume conservation belongs with nourishment
+// and alongshore transport in Phase 3.
+
+const POROSITY = 0.40;
+
+let morphGrid = null;
+let modelDaysPerSec = 2.0;     // model days per real second
+let relaxDays = 40;            // e-folding time of the profile response, model days
+let morphEnabled = true;
+let lastMaxErosion = 0, lastMaxAccretion = 0, barDistanceM = 60, stormNow = 0;
+let shoreRef = null, refWaterLevel = 0;
+
+/**
+ * Fixed waterline reference per column, from the bed WITHOUT the morphology layer.
+ *
+ * Anchored once and held. Two failure modes are avoided by NOT re-deriving it:
+ *  - re-anchoring to the evolving shoreline each step makes the target chase the bed,
+ *    which diverges;
+ *  - re-anchoring on every water-level change cancels the storm signal, because a surge
+ *    lifts the waterline and raises the landward target by exactly what the storm lowers.
+ *
+ * Consequence, stated plainly: the equilibrium profile does not translate inland under
+ * sea-level rise. Shoreline retreat under SLR needs a volume-conserving profile solver
+ * and belongs to Phase 3 alongside alongshore transport.
+ */
+function shoreRefAt(gx) {
+  if (!shoreRef) {
+    shoreRef = new Float32Array(GW);
+    refWaterLevel = conditions.waterLevel;
+    for (let i = 0; i < GW; i++) {
+      const s = shorelineYPx(i, true);
+      shoreRef[i] = s === null ? -1 : s;
+    }
+  }
+  return shoreRef[gx] >= 0 ? shoreRef[gx] : null;
+}
+
+/** Soulsby (1997) settling velocity for a quartz grain, m/s. */
+function settlingVelocity(d50mm) {
+  const d = Math.max(d50mm, 0.05) / 1000;
+  const nu = 1.36e-6;                                   // kinematic viscosity, m2/s
+  const Dstar = d * Math.pow(GRAV * 1.65 / (nu * nu), 1 / 3);
+  return (nu / d) * (Math.sqrt(10.36 * 10.36 + 1.049 * Math.pow(Dstar, 3)) - 10.36);
+}
+
+/** Dean profile coefficient A in m^(1/3), from grain size. */
+function deanA(d50mm) {
+  const ws = Math.max(settlingVelocity(d50mm) * 100, 0.1);   // cm/s
+  return 0.067 * Math.pow(ws, 0.44);
+}
+
+/** Storm intensity 0..1 from wave height and water level. */
+function stormIntensity() {
+  const byWave  = (conditions.Hs - 1.5) / 2.5;
+  const byLevel = (conditions.waterLevel - 0.3) / 1.2;
+  const a = Math.max(0, Math.min(1, byWave))   * 0.6;
+  const b = Math.max(0, Math.min(1, byLevel)) * 0.4;
+  return a + b;
+}
+
+/** Waterline position in pixels for a morph-grid column, or null. */
+function shorelineYPx(gi, base) {
+  const x = (gi + 0.5) * DEPO_CELL;
+  const wlU = conditions.waterLevel / M_PER_BED_UNIT;
+  const fz = base ? bedZ0 : bedZ;
+  let yPrev = 0, zPrev = fz(x, 0);
+  for (let y = DEPO_CELL; y <= height; y += DEPO_CELL) {
+    const z = fz(x, y);
+    if (zPrev < wlU && z >= wlU) {
+      const t = (wlU - zPrev) / ((z - zPrev) || 1e-6);
+      return yPrev + t * DEPO_CELL;
+    }
+    yPrev = y; zPrev = z;
+  }
+  return null;
+}
+
+/**
+ * Equilibrium bed elevation in metres.
+ * Y is metres offshore of the waterline: positive seaward, negative landward.
+ */
+function equilibriumZ(Y, storm, A) {
+  // Referenced to the water level at anchor time, NOT the live one. A surge would
+  // otherwise lift the landward target by exactly the amount the storm lowers it, and
+  // erosion could never appear.
+  const wl = refWaterLevel;
+  if (Y >= 0) {
+    let h = A * Math.pow(Y, 2 / 3);                       // Dean
+    if (storm > 0) {
+      const yb = Math.max(barDistanceM, 15);
+      const w  = Math.max(0.22 * yb, 12);
+      h -= storm * 0.35 * conditions.Hs * Math.exp(-Math.pow((Y - yb) / w, 2));  // bar
+    }
+    return wl - h;
+  }
+  // Landward: foreshore at the configured gradient, flattened and cut back by storm energy.
+  const slope = conditions.slope * (1 - 0.55 * storm);
+  const cut   = storm * 1.2 * Math.exp(-Math.abs(Y) / 18);   // storm scarp
+  return wl + slope * (-Y) - cut;
+}
+
+/** Mean distance from the waterline to the outermost breaking cell, in metres. */
+function computeBarDistance() {
+  const dyp = REACH_CROSSSHORE / Math.max(height, 1);
+  let sum = 0, n = 0;
+  for (let i = 1; i <= NX; i += 4) {
+    let jBreak = -1, jShore = -1;
+    for (let j = 1; j <= NY; j++) {
+      const idx = IX(i, j);
+      if (jBreak < 0 && waveBreaking[idx]) jBreak = j;
+      if (jShore < 0 && depthAt(i, j) <= 0.05) { jShore = j; break; }
+    }
+    if (jBreak > 0 && jShore > jBreak) { sum += (jShore - jBreak) * cellH * dyp; n++; }
+  }
+  barDistanceM = n > 0 ? sum / n : 60;
+}
+
+/** One morphology step over dtModel seconds of model time. */
+function morphologyStep(dtModel) {
+  if (!morphGrid || !morphEnabled || dtModel <= 0) return;
+
+  stormNow = stormIntensity();
+  const A = deanA(conditions.d50);
+  const T = Math.max(relaxDays, 1) * 86400;
+  const f = 1 - Math.exp(-dtModel / T);
+
+  let maxEr = 0, maxAc = 0;
+
+  for (let gx = 0; gx < GW; gx++) {
+    const yShore = shoreRefAt(gx);
+    if (yShore === null) continue;
+    const x = (gx + 0.5) * DEPO_CELL;
+    const yMPerPx = REACH_CROSSSHORE / Math.max(height, 1);
+
+    for (let gy = 0; gy < GH; gy++) {
+      const y = (gy + 0.5) * DEPO_CELL;
+      const idx = gy * GW + gx;
+      const z = bedZ(x, y) * M_PER_BED_UNIT;             // metres — zeq is in metres too
+      const Y = (yShore - y) * yMPerPx;                 // metres offshore (y grows landward)
+      const zeq = equilibriumZ(Y, stormNow, A);
+      let dz = (zeq - z) * f;                            // metres
+
+      // Never move the bed more than a third of the local disequilibrium per step:
+      // protects the grid from a hard kick when the user changes a preset.
+      const cap = Math.abs(zeq - z) * 0.34;
+      if (Math.abs(dz) > cap) dz = Math.sign(dz) * cap;
+
+      if (dz === 0) continue;
+      morphGrid[idx] += dz / M_PER_BED_UNIT;             // to bed units
+      // Stability rail: a beach profile never moves more than ~15 m from its base.
+      if (morphGrid[idx] >  300) morphGrid[idx] =  300;
+      if (morphGrid[idx] < -300) morphGrid[idx] = -300;
+      if (dz < 0 && -dz > maxEr) maxEr = -dz;
+      if (dz > 0 &&  dz > maxAc) maxAc =  dz;
+    }
+  }
+
+  lastMaxErosion = maxEr;
+  lastMaxAccretion = maxAc;
+}
+
+/** Flood / drain the morphology grid with spring sand, for the reset control. */
+function resetMorphology() {
+  if (!morphGrid) return;
+  morphGrid.fill(0);
+  shoreRef = null;
+  updateBedBuffer();
 }
 
 function buildSolidMask() {
@@ -1264,6 +1478,10 @@ function updateHUD() {
   document.getElementById('simtime').textContent=fmt(simTime);
   document.getElementById('ro-hb').textContent     = breakHb > 0 ? breakHb.toFixed(2) : '–';
   document.getElementById('ro-db').textContent     = breakDepth > 0 ? breakDepth.toFixed(2) : '–';
+  document.getElementById('ro-er').textContent    = lastMaxErosion.toFixed(2);
+  document.getElementById('ro-ac').textContent    = lastMaxAccretion.toFixed(2);
+  document.getElementById('ro-storm').textContent = stormNow.toFixed(2);
+  document.getElementById('ro-bar').textContent   = barDistanceM > 0 ? barDistanceM.toFixed(0) : '–';
   document.getElementById('ro-runup').textContent  = runupR2.toFixed(2);
   document.getElementById('ro-xi').textContent     = iribarren.toFixed(2);
   document.getElementById('ro-zone').textContent   =
@@ -1305,6 +1523,7 @@ function setup() {
   GW = Math.ceil(width / DEPO_CELL) + 1;
   GH = Math.ceil(height / DEPO_CELL) + 1;
   depoGrid = new Float32Array(GW * GH); userBedGrid = new Float32Array(GW * GH);
+  morphGrid = new Float32Array(GW * GH);
   rebuildUserBedGrid();          // seed the coastal profile into the cached bed grid
   updateBedBuffer();
 
@@ -1385,6 +1604,17 @@ function setup() {
     writeCoastal({ Hs: 1.2, Tp: 8.0, dirDeg: 0, spreadDeg: 0, waterLevel: 0, slr: 0, d50: 0.30, slope: 0.020 });
   });
   readCoastal();
+
+  // ---- Morphology
+  document.getElementById('m-rate').addEventListener('input', function(){
+    modelDaysPerSec = parseFloat(this.value);
+    document.getElementById('mrate-val').textContent = modelDaysPerSec.toFixed(1);
+  });
+  document.getElementById('m-relax').addEventListener('input', function(){
+    relaxDays = parseFloat(this.value);
+    document.getElementById('relax-val').textContent = relaxDays.toFixed(0);
+  });
+  document.getElementById('reset-morph').addEventListener('click', function(){ resetMorphology(); });
 
   // Physics sliders
   document.getElementById('inflow').addEventListener('input', function(){inflowVel=parseFloat(this.value);document.getElementById('inflow-val').textContent=inflowVel.toFixed(1);});
@@ -1476,6 +1706,10 @@ function draw() {
     simTime += DT;
     buildSolidMask();
     waveFieldStep();
+    const _dtF = (typeof deltaTime === 'number' ? Math.min(deltaTime, 60) : 16.7) / 1000;
+    computeBarDistance();
+    morphologyStep(_dtF * modelDaysPerSec * 86400);
+    if (morphEnabled && (frameCount % 8 === 0)) updateBedBuffer();
     updateParticles();
     drawDeposition();
     bedRenderAcc += DT;

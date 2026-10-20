@@ -13,13 +13,14 @@ deliberate — everything past it is what the case export is for.
 
 ## Status
 
-**Phase 1 — wave transformation.** The interface shell carries over from the fluvial
+**Phase 2 — cross-shore response.** The interface shell carries over from the fluvial
 Sediment Interface: all panels, particles, bed grids, obstacle choreography and timeline.
-The Stam fluid solver is gone. In its place is a column-by-column wave transformation with
-refraction, shoaling, breaking dissipation and runup, driven by a coastal-conditions panel.
+The Stam fluid solver is replaced by a wave transformation (refraction, shoaling, breaking
+dissipation, runup), and the bed now responds across the profile — relaxing toward a
+Dean equilibrium, eroding under a storm and building a bar at the breakpoint.
 
-Sediment transport and morphology are **not built yet** (Phases 2–3). Today the wave field
-is correct and the sand does not yet respond to it.
+Alongshore transport and structures are **not built yet** (Phase 3). Sand moves across the
+shore, not along it: a groyne will not yet do anything.
 
 See `PLAN.md` for the full design and the phase gates.
 
@@ -33,10 +34,13 @@ See `PLAN.md` for the full design and the phase gates.
 | Breaking | Battjes & Janssen (1978), γ = 0.78, Qb = exp(−(γh/Hrms)²) |
 | Runup | Stockdon et al. (2006), R2 on a plane foreshore |
 | Wave input | 1 component (monochromatic) or 7 wrapped-Gaussian directional bins |
+| Profile | Dean h = A·y^(2/3), A from Soulsby (1997) settling velocity |
+| Morphology | dz/dt = (z_eq − z)/T, storm-modified z_eq |
 
-**Not modelled:** diffraction (a structure casts a hard shadow), wave setup in the bed,
-infragravity. Breaking dissipation is applied as an energy decay per cell rather than a
-full roller model.
+**Not modelled:** diffraction (a structure casts a hard shadow), alongshore transport,
+infragravity, shoreline retreat under sea-level rise (the equilibrium profile is anchored
+rather than translated), and volume conservation — the relaxation is target-seeking, not
+flux-conserving.
 
 ## Conditions panel
 
@@ -44,7 +48,15 @@ Wave height, period, direction and directional spread; water level; sea-level ri
 foreshore slope. Presets: calm summer, winter storm, post-storm recovery, SLR 2100.
 
 The readout reports breaking wave height and depth, Stockdon runup, the Iribarren number
-and the breaker type (spilling / plunging / surging).
+and breaker type, plus erosion and accretion rates, storm intensity and bar distance.
+
+## Morphology
+
+The bed relaxes toward an equilibrium profile at a rate set by **model rate** (model days
+per real second) and **response** (the e-folding time). Under wave energy the equilibrium
+changes: the beach face flattens and cuts back, and a bar forms at the breakpoint. Both
+are driven by the same storm intensity, so they stay coupled — which is why a storm digs
+the upper beach and piles the sand into a bar, and why the bar decays once the storm passes.
 
 ## Units
 
@@ -75,9 +87,13 @@ seven weighted components, obliquity lowers the peak, no NaN at the small-wave l
 Current run:
 
 ```
-field: 11040 wet cells, max depth 8.00 m, max H 1.51 m, mean H 1.054 m
+field: 11360 wet cells, max depth 8.00 m, max H 1.50 m, mean H 1.143 m
 runup R2 0.476 m, Iribarren 0.183
 storm: break 3.48 m @ 4.47 m, runup 1.20 m, max H 3.68 m
+Gate A  settled 0.074 m | perturbed 0.803 m -> relaxed 0.035 m
+Gate B  storm bar 179.3 m offshore, intensity 0.62
+        upper profile 0.17 -> -0.33 m (-0.50)
+        bar crest     -3.95 -> -3.18 m (0.77)
 HARNESS PASS
 ```
 

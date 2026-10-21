@@ -161,6 +161,11 @@ try {
     qMean: typeof qMean!=='undefined' ? qMean : null,
     qLong: typeof qLong!=='undefined' ? qLong : null,
     longGrid: typeof longGrid!=='undefined' ? longGrid : null,
+    modelYears: typeof modelYears!=='undefined' ? modelYears : null,
+    solid: typeof solid!=='undefined' ? solid : null,
+    loopTime: typeof timelineLoopTime==='function' ? timelineLoopTime() : null,
+    activeCount: typeof obstacles!=='undefined'
+      ? obstacles.filter(o => isObstacleActive(o)).length : null,
 
     morph: typeof morphGrid!=='undefined' ? morphGrid : null,
     storm: typeof stormNow!=='undefined' ? stormNow : null,
@@ -174,6 +179,8 @@ try {
   morphStep: typeof morphologyStep==='function' ? morphologyStep : null,
   computeLongshore: typeof computeLongshore==='function' ? computeLongshore : null,
   applyLongshore: typeof applyLongshore==='function' ? applyLongshore : null,
+  applyNourishment: typeof applyNourishment==='function' ? applyNourishment : null,
+  setYear: (y) => { if (typeof modelYears === 'number') modelYears = y; },
   longshoreStats: typeof longshoreStats==='function' ? longshoreStats : null,
   longZFn: typeof longZ==='function' ? longZ : null,
   buildSolid: typeof buildSolidMask==='function' ? buildSolidMask : null,
@@ -529,6 +536,75 @@ for (let k = 0; k < 10; k++) { app.computeLongshore(); app.applyLongshore(3600);
 
 // remove the test groyne so nothing downstream sees it
 app.obstacles.pop();
+app.buildSolid();
+app.resetMorph();
+
+// ============================================================ PHASE 4: timeline objects
+console.log("\n=== timeline (model years) ===");
+
+// The clock must be model years, and the timeline must read it.
+app.setYear(7.5);
+const loopAt7 = app.getState().loopTime;
+app.setYear(23.0);
+const loopAt23 = app.getState().loopTime;
+console.log(`year 7.5 -> loop time ${loopAt7.toFixed(1)}; year 23.0 -> ${loopAt23.toFixed(1)} (loop 20 yr)`);
+check(Math.abs(loopAt7 - 7.5) < 0.01, "loop tracks model years", `${loopAt7.toFixed(1)}`);
+check(Math.abs(loopAt23 - 3.0) < 0.01, "loop wraps at the loop length", `${loopAt23.toFixed(1)}`);
+
+// --- Gate E: an object clipped to a later year does nothing until that year
+app.resetMorph();
+app.obstacles.length = 0;
+app.obstacles.push({ type: 'rect', x: 760, y: 400, w: 420, h: 24, rotation: 0,
+                     clips: [{ start: 10, dur: 6 }] });   // groyne appears in year 10
+
+setDir(30);
+const meanLongshore = () => {
+  const lg = app.getState().longGrid;
+  let sum = 0;
+  for (let i = 0; i < lg.length; i++) sum += Math.abs(lg[i]);
+  return sum * D.mpbu;   // total |change|: conservative transport nets to zero by design
+};
+
+app.setYear(5);            // before the clip
+app.buildSolid();
+app.waveFieldStep();
+for (let k = 0; k < 8; k++) { app.computeLongshore(); app.applyLongshore(3600); }
+const beforeClip = meanLongshore();
+const activeBefore = app.getState().activeCount;
+
+app.setYear(13);           // inside the clip
+app.buildSolid();
+app.waveFieldStep();
+for (let k = 0; k < 8; k++) { app.computeLongshore(); app.applyLongshore(3600); }
+const afterClip = meanLongshore() - beforeClip;
+const activeAfter = app.getState().activeCount;
+
+console.log(`year 5: ${activeBefore} active, net longshore volume ${beforeClip.toFixed(4)}`);
+console.log(`year 13: ${activeAfter} active, added ${afterClip.toFixed(4)}`);
+check(activeBefore === 0, "object inactive before its clip", `${activeBefore} active`);
+check(activeAfter === 1, "object active inside its clip", `${activeAfter} active`);
+check(Math.abs(beforeClip) < 0.01, "no bed response before the clip", beforeClip.toFixed(4));
+check(Math.abs(afterClip) > 0.01, "bed responds once the clip opens", afterClip.toFixed(4));
+
+// --- object vocabulary: nourishment adds sand, and is not solid
+app.obstacles.length = 0;
+app.obstacles.push({ type: 'rect', kind: 'nourish', x: 820, y: 400, w: 120, h: 80,
+                     rotation: 0, clips: [{ start: 0, dur: 10000 }] });
+app.buildSolid();
+const solidUnderNourish = (() => {
+  let n = 0;
+  for (let i = 0; i < app.getState().solid.length; i++) if (app.getState().solid[i]) n++;
+  return n;
+})();
+app.resetMorph();
+const zBefore = app.bedZ(820, 400) * D.mpbu;
+for (let k = 0; k < 10; k++) app.applyNourishment(365 * 86400);   // 10 model years
+const zAfter = app.bedZ(820, 400) * D.mpbu;
+console.log(`nourishment: solid cells ${solidUnderNourish}, bed ${zBefore.toFixed(2)} -> ${zAfter.toFixed(2)} m`);
+check(solidUnderNourish === 0, "nourishment is sand, not concrete", `${solidUnderNourish} solid cells`);
+check(zAfter > zBefore + 1.0, "nourishment raises the bed", `+${(zAfter - zBefore).toFixed(2)} m`);
+
+app.obstacles.length = 0;
 app.buildSolid();
 app.resetMorph();
 

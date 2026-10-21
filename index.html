@@ -119,6 +119,7 @@
       sim-time: <span class="hv" id="simtime">0.0</span>s &nbsp; mobile: <span class="hv" id="mobile">0</span><br>
       deposited: <span class="hv" id="deposited">0</span> &nbsp; obstacles: <span class="hv" id="obstacles">0</span><br>
       shape: <span class="hv" id="shape">rect</span> &phi;: <span class="hv" id="rot">0</span>&deg;<br>
+      year: <span class="hv" id="modelyear">0.0</span> &nbsp; <span class="hv" id="tlyear">0.0</span> / <span class="hv" id="tldur">20</span> yr<br>
       <span class="hw" id="paused"></span>
     </div>
     <button id="export-btn" style="width:100%;margin-bottom:4px;" onclick="exportToOpenFOAM()">⬇ EXPORT CASE</button>
@@ -201,14 +202,14 @@
     </div>
 
     <div class="sect-label">timeline <button id="toggle-timeline" class="reset-btn" style="font-size:7px;">off</button></div>
-    <div class="ctrl-row"><label>loop <span class="val" id="timeline-dur-val">120s</span></label><input type="range" id="timeline-dur" min="30" max="600" value="120" step="5"></div>
+    <div class="ctrl-row"><label>loop <span class="val" id="timeline-dur-val">20 yr</span></label><input type="range" id="timeline-dur" min="5" max="100" value="20" step="5"></div>
     <div class="ctrl-row"><label>mode</label><button id="toggle-pingpong" class="reset-btn" style="font-size:8px;">loop</button></div>
   </div>
 </div>
 
 <div id="timeline-bar"><canvas id="timeline-canvas"></canvas></div>
 
-<div id="help" style="position:fixed;bottom:8px;left:50%;transform:translateX(-50%);font-size:10px;color:rgba(255,255,255,0.2);pointer-events:none;z-index:5;text-align:center;">1 circle &middot; 2 rect &middot; 3 freeform &middot; click place &middot; drag move &middot; drag handle resize &middot; wheel rotate &middot; [ ] size &middot; backspace delete &middot; F flow &middot; G grid &middot; H help &middot; M bed &middot; space pause &middot; S save</div>
+<div id="help" style="position:fixed;bottom:8px;left:50%;transform:translateX(-50%);font-size:10px;color:rgba(255,255,255,0.2);pointer-events:none;z-index:5;text-align:center;">1 circle &middot; 2 rect &middot; 3 freeform &middot; 4 nourish &middot; click place &middot; drag move &middot; drag handle resize &middot; wheel rotate &middot; [ ] size &middot; backspace delete &middot; F flow &middot; G grid &middot; H help &middot; M bed &middot; space pause &middot; S save</div>
 
 <script>
 // ─────────────────────────────────────────────
@@ -261,8 +262,9 @@ let polyPoints = [];        // in-progress freeform polygon vertices
 
 // Timeline: choreograph obstacle existence through a looping time range.
 let timelineEnabled = false;
-let timelineDuration = 120;   // loop length in seconds (30..600)
-const DEFAULT_OBJ_DUR = 10;   // default lifetime of a newly placed obstacle
+let timelineDuration = 20;    // loop length in MODEL YEARS (5..100)
+const DEFAULT_OBJ_DUR = 5;    // default lifetime of a newly placed object, model years
+let modelYears = 0;           // elapsed model time: the clock the timeline and morphology share
 let timelinePingPong = false; // false = loop forward, true = bounce back and forth
 let tlDrag = null;            // active timeline drag {mode, obstacleIdx, clipIdx, grabX, ...}
 let selectedClip = -1;        // clip index within obstacles[selectedIdx].clips, -1 = none
@@ -1013,9 +1015,45 @@ function longshoreStats() {
            mean: sum / longGrid.length * M_PER_BED_UNIT };
 }
 
+// ─────────────────────────────────────────────
+// OBJECT VOCABULARY  (Phase 4)
+// ─────────────────────────────────────────────
+// Objects carry a `kind`. Structural kinds block the wave field through buildSolidMask;
+// nourishment does not — it is sand, not concrete.
+
+/** Sand placed over a nourishment object's footprint, at 0.5 m per model year. */
+const NOURISH_RATE = 0.5;
+
+function applyNourishment(dtModel) {
+  if (!morphGrid || dtModel <= 0) return;
+  const dYears = dtModel / (365 * 86400);
+
+  for (let o = 0; o < obstacles.length; o++) {
+    const ob = obstacles[o];
+    if ((ob.kind || 'structure') !== 'nourish') continue;
+    if (!isObstacleActive(ob)) continue;
+
+    const hw = obW(ob) / 2, hh = obH(ob) / 2;
+    const dz = (NOURISH_RATE * dYears) / M_PER_BED_UNIT;
+
+    for (let gy = 0; gy < GH; gy++) {
+      const y = (gy + 0.5) * DEPO_CELL;
+      if (Math.abs(y - ob.y) > hh) continue;
+      for (let gx = 0; gx < GW; gx++) {
+        const x = (gx + 0.5) * DEPO_CELL;
+        if (Math.abs(x - ob.x) > hw) continue;
+        const idx = gy * GW + gx;
+        morphGrid[idx] += dz;
+        if (morphGrid[idx] > 300) morphGrid[idx] = 300;
+      }
+    }
+  }
+}
+
 function buildSolidMask() {
   solid.fill(0);
   for (let ob of obstacles) {
+    if ((ob.kind || 'structure') === 'nourish') continue;   // sand, not concrete
     if (!isObstacleActive(ob)) continue;
     if (ob.type === 'poly') {
       let a = ob.rotation * PI / 180, cosA = cos(a), sinA = sin(a);
@@ -1070,9 +1108,12 @@ function getVelocityAt(px, py) {
 }
 
 function timelineLoopTime() {
+  // Model years, not seconds. The timeline and the morphology must share one clock, or an
+  // object clipped to 2050 activates at a moment the bed has no idea about.
   let T = timelineDuration;
-  if (!timelinePingPong) return ((simTime % T) + T) % T;
-  let m = ((simTime % (2 * T)) + 2 * T) % (2 * T);   // position in a full back-and-forth cycle
+  let t = modelYears;
+  if (!timelinePingPong) return ((t % T) + T) % T;
+  let m = ((t % (2 * T)) + 2 * T) % (2 * T);         // position in a full back-and-forth cycle
   return m <= T ? m : 2 * T - m;                     // bounce at the ends
 }
 
@@ -1649,6 +1690,9 @@ function updateBedThumb() {
 
 function updateHUD() {
   let fmt=(n)=>n.toFixed(1);
+  document.getElementById('modelyear').textContent = modelYears.toFixed(1);
+  document.getElementById('tlyear').textContent    = timelineLoopTime().toFixed(1);
+  document.getElementById('tldur').textContent     = timelineDuration.toFixed(0);
   document.getElementById('simtime').textContent=fmt(simTime);
   document.getElementById('ro-hb').textContent     = breakHb > 0 ? breakHb.toFixed(2) : '–';
   document.getElementById('ro-db').textContent     = breakDepth > 0 ? breakDepth.toFixed(2) : '–';
@@ -1894,10 +1938,13 @@ function draw() {
     buildSolidMask();
     waveFieldStep();
     const _dtF = (typeof deltaTime === 'number' ? Math.min(deltaTime, 60) : 16.7) / 1000;
+    const dtModel = _dtF * modelDaysPerSec * 86400;      // model seconds this frame
+    modelYears += dtModel / (365 * 86400);
     computeBarDistance();
-    morphologyStep(_dtF * modelDaysPerSec * 86400);
+    morphologyStep(dtModel);
     computeLongshore();
-    applyLongshore(_dtF * modelDaysPerSec * 86400);
+    applyLongshore(dtModel);
+    applyNourishment(dtModel);
     if (morphEnabled && (frameCount % 8 === 0)) updateBedBuffer();
     updateParticles();
     drawDeposition();
@@ -2084,6 +2131,12 @@ function hitTestObstacle(mx, my) {
 }
 
 function addObstacle(x, y, type, rot) {
+  if (type === 'nourish') {
+    obstacles.push({ type: 'rect', kind: 'nourish', x, y, w: ghostSize, h: ghostSize * 0.6,
+                     rotation: 0, clips: [{ start: timelineLoopTime(), dur: DEFAULT_OBJ_DUR }] });
+    selectedIdx = obstacles.length - 1;
+    return;
+  }
   obstacles.push({ type, x, y, w: ghostSize, h: ghostSize, rotation: rot||0, clips: [{ start: 0, dur: timelineDuration }] });
 }
 
@@ -2212,6 +2265,7 @@ function keyPressed() {
   else if (key==='1') { ghostType='circle'; polyPoints=[]; }
   else if (key==='2') { ghostType='rect'; polyPoints=[]; }
   else if (key==='3') { ghostType='poly'; }
+  else if (key==='4') { ghostType='nourish'; polyPoints=[]; }
   else if (key==='[') { ghostSize=max(20,ghostSize-5); }
   else if (key===']') { ghostSize=min(100,ghostSize+5); }
   else if ((key==='Backspace'||key==='Delete')&&selectedIdx>=0&&selectedClip>=0) {
@@ -2240,9 +2294,8 @@ function keyPressed() {
 // ─────────────────────────────────────────────
 // TIMELINE
 // ─────────────────────────────────────────────
-function fmtDur(s) {
-  if (s >= 60) { let m = Math.floor(s/60), r = Math.round(s%60); return r ? m + 'm' + r + 's' : m + 'm'; }
-  return Math.round(s) + 's';
+function fmtDur(y) {
+  return (y >= 1 ? Math.round(y) + ' yr' : Math.round(y * 12) + ' mo');
 }
 
 function niceTimeStep(T, W) {

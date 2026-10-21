@@ -13,13 +13,13 @@ deliberate — everything past it is what the case export is for.
 
 ## Status
 
-**Phase 3 — longshore transport and structures.** The interface shell carries over from the
-fluvial Sediment Interface: all panels, particles, bed grids, obstacle choreography and
-timeline. On top of that: a wave transformation (refraction, shoaling, breaking
-dissipation, runup), cross-shore profile response toward a Dean equilibrium, and CERC
-longshore transport that structures actually block.
+**Phase 4 — timeline objects.** The interface shell carries over from the fluvial Sediment
+Interface: all panels, particles, bed grids, obstacle choreography and timeline. On top of
+that: a wave transformation, cross-shore profile response, CERC longshore transport, and a
+timeline that runs on **model years** so an adaptation sequence plays against the morphology
+instead of against the wall clock.
 
-Timeline objects, export and presets are **not built yet** (Phases 4–6).
+Export and presets are **not built yet** (Phases 5–6).
 
 See `PLAN.md` for the full design and the phase gates.
 
@@ -61,13 +61,25 @@ CERC is accurate to perhaps ±50% in absolute terms. The gates are therefore abo
 — the zero at shore-normal, the peak at 45°, which side of a groyne gains sand — not about
 the absolute cubic metres per second.
 
-## Conditions panel
+## Timeline
+
+One clock. **Model years**, not seconds — `modelYears` advances with the morphology, and
+the timeline reads it. An object clipped to start in year 10 activates when the model
+reaches year 10, not when the browser has been open for ten of something else. Clips are
+`{start, dur}` in model years.
+
+Objects carry a `kind`. Structural kinds block the wave field and therefore the transport.
+**Nourishment** (`kind: 'nourish'`, key `4`) does not — it is sand, not concrete — and adds
+0.5 m of bed per model year across its footprint.
+
+## Panels
 
 Wave height, period, direction and directional spread; water level; sea-level rise; D50;
 foreshore slope. Presets: calm summer, winter storm, post-storm recovery, SLR 2100.
 
 The readout reports breaking wave height and depth, Stockdon runup, the Iribarren number
-and breaker type, plus erosion and accretion rates, storm intensity and bar distance.
+and breaker type, erosion and accretion rates, storm intensity, bar distance, longshore
+transport rate, and the current model year against the timeline position.
 
 ## Morphology
 
@@ -125,7 +137,10 @@ particles: mean x 423 px, max x 840 px
 period-averaged onshore component 0.488 cells/frame
 longshore: Q zero at shore-normal, peak at 45 deg, reverses with direction
 groyne: updrift +0.0274 m, downdrift -0.0274 m
-31 checks, 0 failures
+timeline: year 7.5 -> 7.5, year 23.0 -> 3.0 (loop 20 yr)
+clipped groyne: inactive at year 5 (no change), active at year 13 (14.4 m of change)
+nourishment: not solid, raises the bed 5.00 m over 10 years
+39 checks, 0 failures
 HARNESS PASS
 ```
 

@@ -157,6 +157,10 @@ try {
     D: typeof waveDepth!=='undefined' ? waveDepth : null,
     U: typeof u!=='undefined' ? u : null,
     P: typeof particles!=='undefined' ? particles : null,
+    qPeak: typeof qPeak!=='undefined' ? qPeak : null,
+    qMean: typeof qMean!=='undefined' ? qMean : null,
+    qLong: typeof qLong!=='undefined' ? qLong : null,
+    longGrid: typeof longGrid!=='undefined' ? longGrid : null,
 
     morph: typeof morphGrid!=='undefined' ? morphGrid : null,
     storm: typeof stormNow!=='undefined' ? stormNow : null,
@@ -168,6 +172,12 @@ try {
   eq: typeof equilibriumZ==='function' ? equilibriumZ : null,
   deanA: typeof deanA==='function' ? deanA : null,
   morphStep: typeof morphologyStep==='function' ? morphologyStep : null,
+  computeLongshore: typeof computeLongshore==='function' ? computeLongshore : null,
+  applyLongshore: typeof applyLongshore==='function' ? applyLongshore : null,
+  longshoreStats: typeof longshoreStats==='function' ? longshoreStats : null,
+  longZFn: typeof longZ==='function' ? longZ : null,
+  buildSolid: typeof buildSolidMask==='function' ? buildSolidMask : null,
+  obstacles: typeof obstacles!=='undefined' ? obstacles : null,
   updateParticles: typeof updateParticles==='function' ? updateParticles : null,
   tick: (dt) => { if (typeof simTime === 'number') simTime += dt; },
   resetMorph: typeof resetMorphology==='function' ? resetMorphology : null,
@@ -452,6 +462,75 @@ calmCond(); app.waveFieldStep();
   console.log(`period-averaged onshore component ${meanU.toFixed(3)} cells/frame over ${cnt} samples`);
   check(meanU > 0, "net flow is onshore", `${meanU.toFixed(3)} cells/frame`);
 }
+
+// ============================================================ PHASE 3: longshore
+console.log("\n=== longshore ===");
+const setDir = (d) => { st.cond.dirDeg = d; app.waveFieldStep(); app.computeLongshore(); };
+
+// --- Gate C: transport zero at shore-normal, peaking near 45 degrees
+setDir(0);
+const qNormal = app.getState().qPeak;
+console.log(`shore-normal: peak Q ${qNormal.toFixed(6)} m3/s`);
+check(Math.abs(qNormal) < 1e-4, "Q is zero at shore-normal", qNormal.toFixed(6));
+
+const sweep = [];
+for (let d = 0; d <= 85; d += 5) { setDir(d); sweep.push([d, app.getState().qPeak]); }
+const best = sweep.reduce((a, b) => (b[1] > a[1] ? b : a));
+console.log("angle sweep (deg: peak Q m3/s):", sweep.map(([d, q]) => `${d}:${q.toFixed(4)}`).join("  "));
+check(Math.abs(best[0] - 45) <= 10, "Q peaks near 45 deg", `peak at ${best[0]} deg`);
+
+// --- transport reverses with the approach direction
+setDir(30);  const qPos = app.getState().qMean;
+setDir(-30); const qNeg = app.getState().qMean;
+console.log(`dir +30 -> mean Q ${qPos.toFixed(5)}; dir -30 -> ${qNeg.toFixed(5)} m3/s`);
+check(qPos > 0 && qNeg < 0, "transport reverses with direction",
+      `${qPos.toFixed(5)} vs ${qNeg.toFixed(5)}`);
+
+// --- a uniform shore produces no alongshore bed change
+setDir(30);
+app.resetMorph();
+for (let k = 0; k < 3; k++) { app.computeLongshore(); app.applyLongshore(3600); }
+{
+  const ls = app.longshoreStats();
+  console.log(`uniform shore: min ${ls.min.toFixed(4)} m, max ${ls.max.toFixed(4)} m`);
+  check(Math.abs(ls.min) < 0.02 && Math.abs(ls.max) < 0.02,
+        "uniform transport leaves the bed alone", `${ls.min.toFixed(4)} .. ${ls.max.toFixed(4)} m`);
+}
+
+// --- Gate D: a groyne accretes updrift and erodes downdrift
+app.resetMorph();
+const GROYNE_Y = 400;
+app.obstacles.push({ type: 'rect', x: 760, y: GROYNE_Y, w: 420, h: 24, rotation: 0,
+                     clips: [{ start: 0, dur: 10000 }] });   // dur >= loop => always active
+setDir(30);
+for (let k = 0; k < 10; k++) { app.computeLongshore(); app.applyLongshore(3600); }
+{
+  // Measure over the whole updrift and downdrift halves rather than a single pixel: the
+  // fillet is a band, and picking one sample point tests the sampling, not the physics.
+  const lg = app.getState().longGrid;
+  let up = 0, upN = 0, dn = 0, dnN = 0;
+  for (let gy = 0; gy < D.gh; gy++) {
+    const yy = (gy + 0.5) * 4;
+    for (let gx = 0; gx < D.gw; gx++) {
+      const v = lg[gy * D.gw + gx] * D.mpbu;
+      if (Math.abs(v) < 1e-6) continue;
+      if (yy < GROYNE_Y - 12) { up += v; upN++; }
+      else if (yy > GROYNE_Y + 12) { dn += v; dnN++; }
+    }
+  }
+  const upMean = upN ? up / upN : 0;
+  const dnMean = dnN ? dn / dnN : 0;
+  const ls2 = app.longshoreStats();
+  console.log(`groyne stats: min ${ls2.min.toFixed(3)} max ${ls2.max.toFixed(3)} m`);
+  console.log(`  updrift mean ${upMean.toFixed(4)} m over ${upN} cells; downdrift mean ${dnMean.toFixed(4)} m over ${dnN} cells`);
+  check(upMean > 0.0005, "groyne accretes updrift", `${upMean.toFixed(4)} m`);
+  check(dnMean < -0.0005, "groyne erodes downdrift", `${dnMean.toFixed(4)} m`);
+}
+
+// remove the test groyne so nothing downstream sees it
+app.obstacles.pop();
+app.buildSolid();
+app.resetMorph();
 
 console.log("");
 if (failures === 0) console.log("HARNESS PASS");

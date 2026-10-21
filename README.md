@@ -13,14 +13,13 @@ deliberate — everything past it is what the case export is for.
 
 ## Status
 
-**Phase 2 — cross-shore response.** The interface shell carries over from the fluvial
-Sediment Interface: all panels, particles, bed grids, obstacle choreography and timeline.
-The Stam fluid solver is replaced by a wave transformation (refraction, shoaling, breaking
-dissipation, runup), and the bed now responds across the profile — relaxing toward a
-Dean equilibrium, eroding under a storm and building a bar at the breakpoint.
+**Phase 3 — longshore transport and structures.** The interface shell carries over from the
+fluvial Sediment Interface: all panels, particles, bed grids, obstacle choreography and
+timeline. On top of that: a wave transformation (refraction, shoaling, breaking
+dissipation, runup), cross-shore profile response toward a Dean equilibrium, and CERC
+longshore transport that structures actually block.
 
-Alongshore transport and structures are **not built yet** (Phase 3). Sand moves across the
-shore, not along it: a groyne will not yet do anything.
+Timeline objects, export and presets are **not built yet** (Phases 4–6).
 
 See `PLAN.md` for the full design and the phase gates.
 
@@ -36,11 +35,31 @@ See `PLAN.md` for the full design and the phase gates.
 | Wave input | 1 component (monochromatic) or 7 wrapped-Gaussian directional bins |
 | Profile | Dean h = A·y^(2/3), A from Soulsby (1997) settling velocity |
 | Morphology | dz/dt = (z_eq − z)/T, storm-modified z_eq |
+| Longshore | CERC, Q = K/(16(s−1))·Hb^2.5/√γ·sin(2αb) |
+| Bed change | dz/dt = −(1/(1−p))·(dQ/dy)/W_active |
 
-**Not modelled:** diffraction (a structure casts a hard shadow), alongshore transport,
-infragravity, shoreline retreat under sea-level rise (the equilibrium profile is anchored
-rather than translated), and volume conservation — the relaxation is target-seeking, not
-flux-conserving.
+**Not modelled:** diffraction (a structure casts a hard shadow), infragravity, shoreline
+retreat under sea-level rise (the equilibrium profile is anchored rather than translated),
+and shoreline feedback into the breaking angle — so a groyne fillet does not feed back to
+reduce transport. The cross-shore relaxation is target-seeking and **not volume-conserving**;
+the longshore term is conservative and is kept in its own bed layer so the relaxation cannot
+erase it. The two are summed into the bed but not yet coupled.
+
+## Longshore transport
+
+Transport is computed per alongshore row at the break point and the bed follows its
+divergence. Structures block it because they occupy the surf zone: `buildSolidMask` zeroes
+the wave field inside them, so no cell in that row breaks, so Q is zero there. The resulting
+gradient **is** the groyne effect — sand piles up on the updrift side and starves the
+downdrift side.
+
+The transport field is smoothed over a six-row window. A groyne occupies fewer alongshore
+rows than the grid resolves, so differencing it directly deposits the whole fillet into a
+single row — a spike, not a beach. This is a numerical treatment, not physics.
+
+CERC is accurate to perhaps ±50% in absolute terms. The gates are therefore about behaviour
+— the zero at shore-normal, the peak at 45°, which side of a groyne gains sand — not about
+the absolute cubic metres per second.
 
 ## Conditions panel
 
@@ -104,6 +123,9 @@ Gate B  storm bar 181.7 m offshore, intensity 0.62
 orientation: waterline at 74% of width
 particles: mean x 423 px, max x 840 px
 period-averaged onshore component 0.488 cells/frame
+longshore: Q zero at shore-normal, peak at 45 deg, reverses with direction
+groyne: updrift +0.0274 m, downdrift -0.0274 m
+31 checks, 0 failures
 HARNESS PASS
 ```
 

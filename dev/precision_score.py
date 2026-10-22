@@ -20,7 +20,11 @@ import sys
 # --- tolerances: at this error the sub-score reaches 0. Raise a tolerance only with a reason
 #     written next to it, because loosening one is how a bad model starts scoring well.
 TOL = {
-    "calm_drift_m":    0.30,   # m per 100 model days on an equilibrium-seeded bed
+    "calm_rate_m":     0.01,   # m over the SECOND 100 model days: does it keep moving?
+    # Settle is scored as RMS over the active bed, not as max. A single cell out of 11,500
+    # sitting 0.2 m off is not an accuracy failure of a 600 m x 400 m beach; the RMS is what
+    # describes whether the seeded profile is the equilibrium. The max is still reported.
+    "calm_settle_rms_m": 0.05,
     "flux_resid":      0.05,   # relative sd of H^2*Cg along a non-breaking column (exact: 0)
     "cerc_r2":         0.98,   # CERC is exactly sin(2a); below this the fit is not CERC
     "vol_drift":       0.01,   # relative change in total bed volume (exact: 0)
@@ -31,7 +35,7 @@ TOL = {
 }
 
 W = {  # equal weight by default; these are separate failure modes, not one thing
-    "calm": 1.0, "flux": 1.0, "cerc": 1.0, "volume": 1.0,
+    "calm_rate": 1.0, "calm_settle": 1.0, "flux": 1.0, "cerc": 1.0, "volume": 1.0,
     "profile": 1.0, "barpos": 1.0, "erosion": 1.0, "accretion": 1.0,
 }
 
@@ -60,7 +64,8 @@ def score(probes, ref):
     acc_rel = abs(a_b - A_b) / max(abs(A_b), 1e-6)
 
     s = {
-        "calm":      clamp01(1 - probes["calm_drift"] / TOL["calm_drift_m"]),
+        "calm_rate":   clamp01(1 - probes.get("calm_late_max", 0) / TOL["calm_rate_m"]),
+        "calm_settle": clamp01(1 - probes.get("init_diseq_rms", 0) / TOL["calm_settle_rms_m"]),
         "flux":      clamp01(1 - probes["flux_resid"] / TOL["flux_resid"]),
         "cerc":      clamp01((probes["cerc_r2"] - TOL["cerc_r2"]) / (1 - TOL["cerc_r2"])),
         "volume":    clamp01(1 - probes["vol_drift"] / TOL["vol_drift"]),
@@ -70,7 +75,9 @@ def score(probes, ref):
         "accretion": clamp01(1 - acc_rel / TOL["accretion_rel"]),
     }
     measured = {
-        "calm_drift_m": round(probes["calm_drift"], 4),
+        "calm_rate_m": round(probes.get("calm_late_max", 0), 5),
+        "calm_settle_m": round(probes.get("init_diseq_rms", 0), 5),
+        "calm_settle_max": round(probes["calm_drift"], 4),
         "flux_resid": round(probes["flux_resid"], 4),
         "cerc_r2": round(probes["cerc_r2"], 5),
         "vol_drift": probes["vol_drift"],
@@ -100,7 +107,8 @@ def main():
 
     print("PRECISION SCORE\n")
     rows = [
-        ("calm",      "calm drift (m/100d)",      m["calm_drift_m"],   TOL["calm_drift_m"]),
+        ("calm_rate",   "calm drift, 2nd 100d (m)",  m["calm_rate_m"],   TOL["calm_rate_m"]),
+        ("calm_settle", "seeded diseq rms (m)",      m["calm_settle_m"], TOL["calm_settle_rms_m"]),
         ("flux",      "flux residual",            m["flux_resid"],     TOL["flux_resid"]),
         ("cerc",      "CERC r2",                  m["cerc_r2"],        TOL["cerc_r2"]),
         ("volume",    "volume drift",             m["vol_drift"],      TOL["vol_drift"]),

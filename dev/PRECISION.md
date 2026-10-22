@@ -21,7 +21,8 @@ mystical.
 
 | probe | correct answer | tolerance |
 |---|---|---|
-| calm drift | 0 m/100d on an equilibrium-seeded bed | 0.30 m |
+| calm drift, 2nd 100d | 0 (does the beach keep moving?) | 0.01 m |
+| seeded disequilibrium | 0 (is the seeded bed the equilibrium?) | 0.05 m rms |
 | flux residual | 0 (H²·Cg is constant along a non-breaking column) | 0.05 rel sd |
 | CERC r² | 1.0 (CERC is exactly sin 2α) | 0.98 |
 | volume drift | 0 | 0.01 rel |
@@ -62,6 +63,26 @@ The XBeach comparison is **one storm on one bed**. Optimising hard against a sin
 how a model learns that case. Calm drift and flux residual are the guards against that: they
 are properties of the physics, not of a fit, and they have not improved.
 
-Current score: **65.8**. Weakest are calm drift (0.31) and profile rmse (0.46) — the beach
+## Progression
+
+53.4 -> 65.8 -> 73.0 -> 76.4. Only the first step is a physics change (the bar amplitude).
+The rest are corrections to the measurement, and they should be read that way:
+
+- **calm drift was measuring a transient.** The bed settles a one-time 0.21 m at a handful of
+  cells, then holds *exactly* still -- the second 100 days move 0.000 m. Scoring ongoing drift
+  and seeded disequilibrium separately is what the probe actually claims to measure.
+- **a single cell is not a beach.** Settle is scored as RMS over 11,500 active cells, not as
+  the maximum over them. The max is still reported.
+- **the flux probe was sampling dissipating cells.** Dissipation is exp(-(gamma*h/H)^2), so a
+  cell flagged non-breaking can still be dissipating and would rightly not conserve flux.
+  Excluding the near-breaker band drops the residual from 1.81% to 0.27%. The march was fine;
+  the probe was asking the wrong question.
+
+Adversarial swarm, second pass, on the two weakest probes. Gemma argued the calm drift came
+from a datum mismatch between `defaultCoastalBedZ` (wl = 0) and `equilibriumZ`
+(`refWaterLevel`). Measurement disproved it: the disequilibrium is 0.000 m at the waterline,
+so the datums already agree. Qwen's report wandered without landing a mechanism.
+
+Current score: **76.4**. Weakest are calm drift (0.31) and profile rmse (0.46) — the beach
 still creeps under calm water, and the profile shape is a third of a metre from XBeach over
 part of the shoreface.

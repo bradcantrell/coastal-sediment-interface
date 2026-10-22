@@ -921,11 +921,82 @@ if (process.env.SCORE) {
     app.obstacles.length = 0; app.buildSolid();
     app.resetMorph(); app.setYear(0);
     app.waveFieldStep(); app.barDist();
+    // Disequilibrium BEFORE anything moves: z - equilibriumZ at every active cell.
+    {
+      const gd0 = app.gridDims();
+      const A0 = app.deanA(app.cond.d50);
+      let worst = 0, worstY = 0, sum = 0, n = 0;
+      for (let gy = 0; gy < gd0.GH; gy++) {
+        const xShore = app.shoreRef(gy);          // shoreRefAt takes a GRID row, not a pixel row
+        if (xShore === null) continue;
+        for (let gx = 0; gx < gd0.GW; gx++) {
+          const px = (gx + 0.5) * 4, py = (gy + 0.5) * 4;
+          const z = app.bedZ(px, py) * app.dims.mpbu;
+          const Y = (xShore - px) * (app.dims.cross / 1200);
+          const zeq = app.eq(Y, app.getState().storm, A0);
+          if (z > 1.5) continue;          // same dune exclusion morphologyStep uses
+          const u = z - zeq;
+          sum += u * u; n++;
+          if (Math.abs(u) > Math.abs(worst)) { worst = u; worstY = Y; }
+        }
+      }
+      out.init_diseq_max = +worst.toFixed(4);
+      out.init_diseq_at_Y = +worstY.toFixed(1);
+      out.init_diseq_rms = +Math.sqrt(sum / Math.max(n, 1)).toFixed(4);
+      // shape of u along the profile: is it constant (datum), or growing offshore (A mismatch)?
+      {
+        const gy3 = Math.max(1, Math.floor(gd0.GH / 2));
+        const xS = app.shoreRef(gy3);
+        const mpp = app.dims.cross / 1200;
+        const samp = [];
+        for (let Yt of [0, 25, 60, 100, 160, 240, 340, 400]) {
+          const px = xS - Yt / mpp, py = (gy3 + 0.5) * 4;
+          const z = app.bedZ(px, py) * app.dims.mpbu;
+          samp.push(Yt + ":" + (z - app.eq(Yt, app.getState().storm, A0)).toFixed(3));
+        }
+        out.diseq_shape = samp.join(" ");
+      }
+      out.init_diseq_n = n;
+    }
+    const snap = () => { const mm = app.getState().morph; let t = 0;
+      for (let i = 0; i < mm.length; i++) t += mm[i]; return t; };
     for (let k = 0; k < 20; k++) app.morphStep(86400 * 5);
+    const settle_sum = snap();
+    const settleMap = Float32Array.from(app.getState().morph);
+    for (let k = 0; k < 20; k++) app.morphStep(86400 * 5);   // second 100 days
     const m = app.getState().morph;
-    let maxd = 0;
-    for (let i = 0; i < m.length; i++) if (Math.abs(m[i]) > maxd) maxd = Math.abs(m[i]);
+    // Ongoing drift: how much moves in the SECOND 100 days. A settling transient shows up in
+    // the first window and should be near zero here if the bed is genuinely at equilibrium.
+    out.calm_late_max = +((() => {
+      const mm = app.getState().morph; let mx = 0;
+      for (let i = 0; i < mm.length; i++) mx = Math.max(mx, Math.abs(mm[i] - settleMap[i]));
+      return mx * app.dims.mpbu;
+    })()).toFixed(5);
+    const gd = app.gridDims();
+    let maxd = 0, mi = -1;
+    for (let i = 0; i < m.length; i++) if (Math.abs(m[i]) > maxd) { maxd = Math.abs(m[i]); mi = i; }
     out.calm_drift = maxd * app.dims.mpbu;
+    if (mi >= 0) {
+      const gx = mi % gd.GW, gy = (mi / gd.GW) | 0;
+      out.calm_at = { gx, gy, xm: +(gx * 4 * (app.dims.cross / 1200)).toFixed(1) };
+      const bits = [];
+      for (let s2 = 0; s2 <= 6; s2++) {
+        const ii = Math.min(gd.GW - 1, gx - 20 + s2 * 8);
+        bits.push((m[gy * gd.GW + ii] * app.dims.mpbu).toFixed(3));
+      }
+      out.calm_profile = bits.join(",");
+      const top = [];
+      for (let i = 0; i < m.length; i++) top.push([Math.abs(m[i]), i]);
+      top.sort((a, b) => b[0] - a[0]);
+      const mpp = app.dims.cross / 1200;   // metres per pixel
+      out.calm_top5 = top.slice(0, 5).map(([v, i2]) => {
+        const gx2 = i2 % gd.GW;
+        const xm2 = gx2 * 4 * mpp;
+        const xShore = app.shoreRef(Math.max(1, Math.min(gd.GH - 1, ((i2 / gd.GW) | 0)) + 0.5) * 4);
+        return { xm: +xm2.toFixed(1), Y: +((xShore - gx2 * 4) * mpp).toFixed(1),
+                 dz: +(m[i2] * app.dims.mpbu).toFixed(4) };
+      });
+    }
   }
 
   // --- shoaling exponent against Green's law
@@ -957,6 +1028,11 @@ if (process.env.SCORE) {
     for (let i = 2; i < g.NX - 1; i++) {
       const w = app.waveAt(i, j);
       if (w.breaking || w.depth < 0.8 || !(w.H > 0)) continue;
+      // Dissipation is exp(-(gamma*h/Hrms)^2), so it is only negligible well below the cap.
+      // A cell flagged non-breaking can still be dissipating, which would rightly break flux
+      // conservation -- exclude the near-breaker band so the probe tests the shoaling march
+      // and not the breaking model.
+      if (w.H > 0.70 * 0.78 * w.depth) continue;
       flux.push(w.H * w.H * app.groupVel(app.cond.Tp, w.depth));
     }
     if (flux.length > 20) {

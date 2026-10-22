@@ -502,6 +502,11 @@ const BEACH_SLOPE    = 0.10;
 const DUNE_SLOPE     = 0.05;
 const BERM_TOP_M     = 1.5;   // metres above still water: top of the active beach
 
+// Cross-shore transport coefficient at the reference wave height, m2/s. Sets how fast the
+// profile redistributes; scaled by (Hs/1.5)^2 in morphologyStep so storms move sand faster.
+const TRANSPORT_D0   = 0.35;
+const TRANSPORT_HREF = 1.5;
+
 let conditions = {
   Hs: 1.20,          // m, offshore significant wave height
   Tp: 8.0,           // s, peak period
@@ -874,40 +879,79 @@ function morphologyStep(dtModel) {
 
   stormNow = stormIntensity();
   const A = deanA(conditions.d50);
-  const T = Math.max(relaxDays, 1) * 86400;
-  const f = 1 - Math.exp(-dtModel / T);
   const xMPerPx = REACH_CROSSSHORE / Math.max(width, 1);
+  const dx = DEPO_CELL * xMPerPx;                    // metres per morph cell
+  const POR = 0.4;
+
+  // Transport scales with wave energy. This is what lets one constant serve both a storm
+  // that erodes in hours and a recovery that takes weeks.
+  const energy = Math.pow(Math.max(conditions.Hs, 0.1) / TRANSPORT_HREF, 2);
+  const D = TRANSPORT_D0 * energy;
+  const r = (D / (1 - POR)) * dtModel / (dx * dx);
 
   let maxEr = 0, maxAc = 0;
+
+  const u    = new Float64Array(GW);
+  const un   = new Float64Array(GW);
+  const diag = new Float64Array(GW);
+  const low  = new Float64Array(GW);
+  const up   = new Float64Array(GW);
+  const rhs  = new Float64Array(GW);
+  const act  = new Uint8Array(GW);
 
   for (let gy = 0; gy < GH; gy++) {
     const xShore = shoreRefAt(gy);
     if (xShore === null) continue;
     const y = (gy + 0.5) * DEPO_CELL;
 
+    let any = false;
     for (let gx = 0; gx < GW; gx++) {
       const x = (gx + 0.5) * DEPO_CELL;
+      const z = bedZ(x, y) * M_PER_BED_UNIT;
+      // The dune is not a Dean profile: exclude it from transport entirely.
+      if (z > refWaterLevel + BERM_TOP_M) { act[gx] = 0; u[gx] = 0; continue; }
+      const Y = (xShore - x) * xMPerPx;
+      u[gx] = z - equilibriumZ(Y, stormNow, A);
+      act[gx] = 1;
+      any = true;
+    }
+    if (!any) continue;
+
+    // Implicit tridiagonal: (I - r*L) u_new = u, zero-flux at both ends.
+    for (let gx = 0; gx < GW; gx++) {
+      const linkL = gx > 0      && act[gx] && act[gx - 1];
+      const linkR = gx < GW - 1 && act[gx] && act[gx + 1];
+      const rr = (linkL || linkR) ? r : 0;
+      // A boundary cell couples to one neighbour against itself (ghost cell = itself),
+      // which is a zero-flux condition rather than a fixed value.
+      const nb = (linkL ? 1 : 0) + (linkR ? 1 : 0);
+      low[gx]  = linkL ? -rr : 0;
+      up[gx]   = linkR ? -rr : 0;
+      diag[gx] = 1 + rr * Math.max(nb, 0);
+      rhs[gx]  = u[gx];
+    }
+
+    // Thomas algorithm.
+    for (let gx = 1; gx < GW; gx++) {
+      const f = low[gx] / diag[gx - 1];
+      diag[gx] -= f * up[gx - 1];
+      rhs[gx]  -= f * rhs[gx - 1];
+    }
+    un[GW - 1] = rhs[GW - 1] / diag[GW - 1];
+    for (let gx = GW - 2; gx >= 0; gx--) {
+      un[gx] = (rhs[gx] - up[gx] * un[gx + 1]) / diag[gx];
+    }
+
+    for (let gx = 0; gx < GW; gx++) {
+      if (!act[gx]) continue;
+      const du = un[gx] - u[gx];                      // metres
+      if (!isFinite(du) || du === 0) continue;
       const idx = gy * GW + gx;
-      const z = bedZ(x, y) * M_PER_BED_UNIT;             // metres — zeq is in metres too
-      // The dune is not a Dean profile. Above the berm crest the equilibrium says nothing,
-      // and relaxing it toward a foreshore ramp was flattening it every frame.
-      if (z > refWaterLevel + BERM_TOP_M) continue;
-      const Y = (xShore - x) * xMPerPx;                  // metres offshore (+x is landward)
-      const zeq = equilibriumZ(Y, stormNow, A);
-      let dz = (zeq - z) * f;                            // metres
-
-      // Never move the bed more than a third of the local disequilibrium per step:
-      // protects the grid from a hard kick when the user changes a preset.
-      const cap = Math.abs(zeq - z) * 0.34;
-      if (Math.abs(dz) > cap) dz = Math.sign(dz) * cap;
-
-      if (dz === 0) continue;
-      morphGrid[idx] += dz / M_PER_BED_UNIT;             // to bed units
-      // Stability rail: a beach profile never moves more than ~15 m from its base.
+      morphGrid[idx] += du / M_PER_BED_UNIT;
       if (morphGrid[idx] >  300) morphGrid[idx] =  300;
       if (morphGrid[idx] < -300) morphGrid[idx] = -300;
-      if (dz < 0 && -dz > maxEr) maxEr = -dz;
-      if (dz > 0 &&  dz > maxAc) maxAc =  dz;
+      if (du < 0 && -du > maxEr) maxEr = -du;
+      if (du > 0 &&  du > maxAc) maxAc =  du;
     }
   }
 

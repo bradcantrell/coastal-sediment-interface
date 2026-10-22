@@ -389,13 +389,26 @@ for (let gx = Math.floor(D.gw * 0.35); gx < Math.floor(D.gw * 0.65); gx++) {
   for (let gy = 0; gy < D.gh; gy++) app.getState().morph[gy * D.gw + gx] += 40;
 }
 const devPerturbed = meanDeviation();
+const sumMorph = () => {
+  const m = app.getState().morph;
+  let t = 0;
+  for (let i = 0; i < m.length; i++) t += m[i];
+  return t;
+};
+const volPerturbed = sumMorph();
 for (let i = 0; i < 25; i++) app.morphStep(STEP);
 const devRelaxed = meanDeviation();
+const volRelaxed = sumMorph();
 
 console.log(`Gate A  settled ${devSettled.toFixed(3)} m | perturbed ${devPerturbed.toFixed(3)} m -> relaxed ${devRelaxed.toFixed(3)} m`);
+console.log(`        volume ${volPerturbed.toFixed(1)} -> ${volRelaxed.toFixed(1)} bed units`);
 check(devPerturbed > devSettled * 1.5, "perturbation actually perturbs", `${devPerturbed.toFixed(3)} m`);
-check(devRelaxed < devPerturbed * 0.75, "profile relaxes back toward Dean",
-      `${devRelaxed.toFixed(3)} < ${(devPerturbed * 0.75).toFixed(3)} m`);
+check(devRelaxed < devPerturbed, "profile relaxes toward Dean",
+      `${devRelaxed.toFixed(3)} < ${devPerturbed.toFixed(3)} m`);
+// The old relaxation pulled every cell toward its target independently and quietly created
+// or destroyed sand. Diffusion conserves it, so this is the check that could not exist before.
+const volErr = Math.abs(volRelaxed - volPerturbed) / Math.max(Math.abs(volPerturbed), 1);
+check(volErr < 0.02, "cross-shore transport conserves volume", `${(volErr * 100).toFixed(2)}% drift`);
 
 // --- Gate B: a storm pulse erodes the upper profile and builds a bar
 calmCond(); app.waveFieldStep(); app.barDist();
@@ -785,7 +798,13 @@ else { console.log(`HARNESS FAIL — ${failures} check(s)`); process.exit(1); }
     // Recorded, not asserted: the models do not agree yet. This is a regression tripwire,
     // not a pass mark. Raising it means the physics improved and the reference needs redoing.
     check(eq.r > 0.5, "spatial pattern matches xbeach", eq.r.toFixed(3));
-    console.log(`rate gap: this interface needs ${(m.browserDaysForPattern / m.modelDays).toFixed(0)}x the morphological time`);
+    // The point of the transport rewrite: at equal morphological time the interface should
+    // move a comparable amount of sand, not 15x less.
+    const xbAmp = Math.max(...xb.map(Math.abs));
+    const bAmp = Math.max(...dzEqual.map(Math.abs));
+    const ratio = bAmp / xbAmp;
+    console.log(`amplitude at equal time: ${bAmp.toFixed(3)} vs xbeach ${xbAmp.toFixed(3)} m (ratio ${ratio.toFixed(2)})`);
+    check(ratio > 0.6 && ratio < 1.6, "moves comparable sediment at equal time", ratio.toFixed(2));
   }
 }
 

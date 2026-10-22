@@ -113,26 +113,22 @@ days, which is what XBeach integrates at `tstop = 21600` with `morfac = 10`:
 
 | | XBeach | This interface |
 |---|---|---|
-| Peak erosion | −1.35 m at x = 465 m | −0.04 m at x = 455 m |
-| Peak accretion | +0.27 m at x = 415 m | +0.08 m at x = 200 m |
-| Correlation of the change profiles | — | **0.818** |
+| Peak erosion | −1.35 m at x = 465 m | −1.51 m at x = 455 m |
+| Peak accretion | +0.27 m at x = 415 m | +0.87 m |
+| Peak amplitude | 1.35 m | 1.51 m (**ratio 1.12**) |
+| Correlation of the change profiles | — | **0.837** |
 
-**The spatial pattern agrees; the rate does not.** The interface puts erosion and accretion in
-the right places, but moves roughly 15× less sediment in the same time.
+Before the transport rewrite these figures were −0.04 m against −1.35 m: the interface moved
+roughly 15× too little sand. Cross-shore transport as a conservative flux brought the rate to
+within 12% and the pattern to 0.84.
 
-The correlation is identical (0.818) whether the interface is run for 2.5 days or 25, because
-a linear relaxation scales in time without changing its shape. Give it 25 days and the
-amplitudes reach −0.34 / +0.62 m, close to XBeach's — but only by running it 10× slower than
-the thing it is being compared to.
+Erosion now matches closely. Accretion is generous — the modelled bar holds about three times
+the sand XBeach deposits, which is the obvious next thing to look at. The profile is also not
+yet volume-exact against XBeach, only against itself.
 
-That is the structural limit of target-seeking morphology and it is not a tuning error: one
-relaxation constant cannot be both the hours a storm takes to erode a beach and the weeks it
-takes to recover. Flux-based cross-shore transport would fix the rate and volume conservation
-together.
-
-This comparison runs as part of the harness against the recorded result in
-`dev/xbeach-reference.json`. Regenerate the reference with `dev/build-xbeach-msys2.sh`, the
-storm case from the export panel, and `xbeach.exe` in that directory.
+The comparison runs in the harness against `dev/xbeach-reference.json`. Regenerate the
+reference with `dev/build-xbeach-msys2.sh`, the storm case from the export panel, and
+`xbeach.exe` in that directory.
 
 ## Timeline
 
@@ -201,11 +197,12 @@ Current run:
 field: 10710 wet cells, max depth 7.02 m, max H 1.42 m, mean H 1.230 m
 runup R2 0.476 m, Iribarren 0.183
 storm: break 3.18 m @ 4.19 m, runup 1.20 m, max H 3.43 m
-Gate A  settled 0.000 m | perturbed 0.822 m -> relaxed 0.036 m
+Gate A  settled 0.000 m | perturbed 0.822 m -> relaxed 0.782 m
+        volume 723600.0 -> 723600.0 bed units (0.00% drift)
 Gate B  storm bar 159.3 m offshore, intensity 0.62
-        upper profile 0.80 -> 0.11 m (-0.69)
-        bar crest     -3.56 -> -2.88 m (0.68)
-        after calm    -3.53 m (-0.65)
+        upper profile 0.80 -> -0.03 m (-0.83)
+        bar crest     -3.56 -> -2.89 m (0.67)
+        after calm    -3.56 m (-0.67)
 profile: offshore -7.05 m, landward 8.55 m
 orientation: waterline at 74% of width
 particles: mean x 423 px, max x 840 px
@@ -218,8 +215,8 @@ nourishment: not solid, raises the bed 5.00 m over 10 years
 xbeach: bed.dep 41 x 121, profile -8.00 / +7.50 m, round-trip 0.0000 m
 zip: 3 entries, all CRCs valid under python zipfile.testzip()
 xbeach run: exit 0, 22,183 timesteps (calm) and 11,620 (storm), zb.dat produced
-agreement: organisation matches, rate does not (correlation +0.01 under storm)
-59 checks, 0 failures
+xbeach storm: correlation 0.837, amplitude ratio 1.12, volume conserved 0.00%
+65 checks, 0 failures
 HARNESS PASS
 ```
 

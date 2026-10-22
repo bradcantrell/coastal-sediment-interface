@@ -352,12 +352,30 @@ function getStationZ(station, y) {
 function defaultCoastalBedZ(x, y) {
   // Cross-shore runs along x: offshore at x=0 (left), dune at x=width (right).
   // Waterline lands at 0.74 of the width, in the right third.
-  const t = x / Math.max(width, 1);
-  if (t < 0.40) return -160;                                  // offshore shelf   -8.0 m
-  if (t < 0.60) return -160 + (t - 0.40) / 0.20 * 120;        // shoreface        -8.0 -> -2.0
-  if (t < 0.74) return  -40 + (t - 0.60) / 0.14 *  40;        // beach face       -2.0 ->  0.0
-  if (t < 0.86) return    0 + (t - 0.74) / 0.12 *  30;        // berm              0.0 ->  1.5
-  return                 30 + (t - 0.86) / 0.14 * 120;        // dune              1.5 ->  7.5
+  //
+  // Built FROM the equilibrium rather than hand-placed. Offshore is the Dean curve for the
+  // configured sediment; landward is the beach gradient the equilibrium itself uses; beyond
+  // the berm crest the dune rises at its own slope. Under calm the disequilibrium is zero,
+  // so the profile does not lurch toward a target it was never seeded at.
+  const xShore  = 0.74 * Math.max(width, 1);
+  const xMPerPx = REACH_CROSSSHORE / Math.max(width, 1);
+  const Y = (xShore - x) * xMPerPx;                 // metres offshore of the waterline
+  // Datum, NOT the live water level. Water rises over a fixed bed; if the profile followed
+  // conditions.waterLevel a surge would lift the seabed with it and erode nothing.
+  const wl = 0;
+  const A  = deanA(conditions.d50);
+
+  if (Y >= 0) {                                     // shoreface: Dean h = A y^(2/3)
+    return (wl - A * Math.pow(Y, 2 / 3)) / M_PER_BED_UNIT;
+  }
+
+  const run  = -Y;
+  const zBch = wl + BEACH_SLOPE * run;
+  if (zBch <= wl + BERM_TOP_M) {                    // beach face
+    return zBch / M_PER_BED_UNIT;
+  }
+  const runAtBerm = BERM_TOP_M / BEACH_SLOPE;       // dune: continues from the berm crest
+  return (wl + BERM_TOP_M + (run - runAtBerm) * DUNE_SLOPE) / M_PER_BED_UNIT;
 }
 
 function computeUserBedZ(x, y) {
@@ -474,8 +492,15 @@ const RHO  = 1025;              // kg/m3, seawater
 const VEL_GAIN = 120;           // visual gain: orbital m/s -> pixels/frame a viewer can read
 
 const REACH_ALONGSHORE = 400;   // m, x
-const REACH_CROSSSHORE = 300;   // m, y (offshore at y=0, dune landward)
+const REACH_CROSSSHORE = 600;   // m, x (offshore at x=0, dune landward)
 const M_PER_BED_UNIT   = 0.05;  // metres of elevation per bed unit
+
+// Morphology profile constants. BEACH_SLOPE is the subaerial beach gradient the equilibrium
+// is built from — distinct from conditions.slope, which is the foreshore gradient feeding
+// the runup formula. DUNE_SLOPE governs the dune beyond the berm crest.
+const BEACH_SLOPE    = 0.10;
+const DUNE_SLOPE     = 0.05;
+const BERM_TOP_M     = 1.5;   // metres above still water: top of the active beach
 
 let conditions = {
   Hs: 1.20,          // m, offshore significant wave height
@@ -819,8 +844,10 @@ function equilibriumZ(Y, storm, A) {
     }
     return wl - h;
   }
-  // Landward: foreshore at the configured gradient, flattened and cut back by storm energy.
-  const slope = conditions.slope * (1 - 0.55 * storm);
+  // Landward: the beach gradient this profile is built from, cut back by storm energy.
+  // conditions.slope is NOT used here — that is the runup foreshore gradient, a different
+  // quantity. Using it dragged a 12% dune toward a 2% ramp.
+  const slope = BEACH_SLOPE * (1 - 0.55 * storm);
   const cut   = storm * 1.2 * Math.exp(-Math.abs(Y) / 18);   // storm scarp
   return wl + slope * (-Y) - cut;
 }
@@ -862,6 +889,9 @@ function morphologyStep(dtModel) {
       const x = (gx + 0.5) * DEPO_CELL;
       const idx = gy * GW + gx;
       const z = bedZ(x, y) * M_PER_BED_UNIT;             // metres — zeq is in metres too
+      // The dune is not a Dean profile. Above the berm crest the equilibrium says nothing,
+      // and relaxing it toward a foreshore ramp was flattening it every frame.
+      if (z > refWaterLevel + BERM_TOP_M) continue;
       const Y = (xShore - x) * xMPerPx;                  // metres offshore (+x is landward)
       const zeq = equilibriumZ(Y, stormNow, A);
       let dz = (zeq - z) * f;                            // metres

@@ -107,28 +107,26 @@ old error and look like the patch failed.
 
 ### Agreement with XBeach
 
-The case runs. The two models do not agree, and the reason is structural rather than
-mechanical.
+The case runs and now starts from a consistent bed. The two models still do not agree
+numerically, and the remaining gap is the dynamics rather than the initial condition.
+
+Same bed, same storm (Hs 3.4 m, Tp 12 s, 0.8 m surge), same nominal morphological time:
 
 | | XBeach | This interface |
 |---|---|---|
-| Change range | −0.70 … +0.73 m | −0.36 … +0.32 m |
-| Peak erosion | x = 232 m | x = 300 m (dune) |
-| Peak accretion | x = 175 m (bar) | x = 25–150 m (whole shoreface) |
-| Correlation, active zone | — | **+0.07** |
+| Peak erosion | −1.35 m at x = 465 m | −0.04 m at x = 230 m |
+| Peak accretion | +0.27 m at x = 415 m | +0.08 m at x = 200 m |
+| Correlation, active zone | — | **+0.01** |
 
-XBeach moves sediment only where the hydrodynamics move it: a bar at the breakpoint, erosion
-landward of it, and essentially nothing on the offshore shelf. This interface relaxes the
-whole profile toward a Dean target **whether or not the waves justify it**, so its change is
-spread across the entire shoreface and the dune.
+Both build a bar offshore of an eroding zone, so the *organisation* is now right — it was
+not before the profile fix. What remains is rate: XBeach moves 1.35 m in 25 morphological
+days, this interface moves 0.08 m in the same time. The relaxation constant is 40 days,
+which is a sensible *recovery* timescale and roughly 20× too slow for *storm* erosion.
 
-Running a second identical window moves 94% as much as the first, which is the tell: this is
-steady relaxation toward a target roughly 40 relax-days away, not convergence. The exported
-case therefore agrees with the browser only where the Dean target happens to coincide with
-what the waves do — which, for this bed, is nowhere.
-
-Fixing it means replacing target-seeking morphology with flux-based transport, which is the
-same change that would give volume conservation and sea-level-rise retreat.
+That is a structural limit of target-seeking morphology, not a tuning error: one linear
+relaxation time cannot be both the hours a storm takes to erode a beach and the weeks it
+takes to recover. Replacing it with flux-based cross-shore transport would fix the rate and
+the volume conservation together.
 
 ## Timeline
 
@@ -194,13 +192,15 @@ seven weighted components, obliquity lowers the peak, no NaN at the small-wave l
 Current run:
 
 ```
-field: 10710 wet cells, max depth 8.00 m, max H 1.51 m, mean H 1.151 m
+field: 10710 wet cells, max depth 7.02 m, max H 1.42 m, mean H 1.230 m
 runup R2 0.476 m, Iribarren 0.183
-storm: break 3.68 m @ 4.81 m, runup 1.20 m, max H 3.68 m
-Gate A  settled 0.078 m | perturbed 0.854 m -> relaxed 0.038 m
-Gate B  storm bar 181.7 m offshore, intensity 0.62
-        upper profile 0.16 -> -0.33 m (-0.49)
-        bar crest     -3.99 -> -3.22 m (0.77)
+storm: break 3.18 m @ 4.19 m, runup 1.20 m, max H 3.43 m
+Gate A  settled 0.000 m | perturbed 0.822 m -> relaxed 0.036 m
+Gate B  storm bar 159.3 m offshore, intensity 0.62
+        upper profile 0.80 -> 0.11 m (-0.69)
+        bar crest     -3.56 -> -2.88 m (0.68)
+        after calm    -3.53 m (-0.65)
+profile: offshore -7.05 m, landward 8.55 m
 orientation: waterline at 74% of width
 particles: mean x 423 px, max x 840 px
 period-averaged onshore component 0.488 cells/frame
@@ -211,8 +211,8 @@ clipped groyne: inactive at year 5 (no change), active at year 13 (14.4 m of cha
 nourishment: not solid, raises the bed 5.00 m over 10 years
 xbeach: bed.dep 41 x 121, profile -8.00 / +7.50 m, round-trip 0.0000 m
 zip: 3 entries, all CRCs valid under python zipfile.testzip()
-xbeach run: exit 0, 22,183 timesteps, 211 s, zb.dat produced
-agreement: correlation +0.07, sign agreement 39% (does not agree)
+xbeach run: exit 0, 22,183 timesteps (calm) and 11,620 (storm), zb.dat produced
+agreement: organisation matches, rate does not (correlation +0.01 under storm)
 59 checks, 0 failures
 HARNESS PASS
 ```

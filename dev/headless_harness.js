@@ -732,8 +732,31 @@ console.log("");
 if (failures === 0) console.log("HARNESS PASS");
 else { console.log(`HARNESS FAIL — ${failures} check(s)`); process.exit(1); }
 
+// ============================================================ storm case for XBeach comparison
+if (process.env.XB_STORM) {
+  Object.assign(app.cond, { Hs: 3.4, Tp: 12.0, dirDeg: -28, spreadDeg: 18,
+                            waterLevel: 0.8, slr: 0, d50: 0.30, slope: 0.020 });
+  app.obstacles.length = 0;
+  app.buildSolid();
+  app.resetMorph();
+
+  const sx = app.buildXBeach({ hours: 6, morfac: 10 });
+  const e2 = new TextEncoder();
+  const z2 = app.zipStore([
+    { name: 'params.txt',  data: e2.encode(sx.params)  },
+    { name: 'bed.dep',     data: e2.encode(sx.bed)     },
+    { name: 'jonswap.txt', data: e2.encode(sx.jonswap) },
+  ]);
+  require('fs').writeFileSync(process.env.XB_STORM, Buffer.from(z2));
+  console.log(`wrote storm case -> ${process.env.XB_STORM}`);
+}
+
 // ============================================================ profile dump for XBeach comparison
 if (process.env.MORPH_DUMP) {
+  if (process.env.MORPH_STORM) {
+    Object.assign(app.cond, { Hs: 3.4, Tp: 12.0, dirDeg: -28, spreadDeg: 18,
+                              waterLevel: 0.8, slr: 0, d50: 0.30, slope: 0.020 });
+  }
   app.obstacles.length = 0;
   app.buildSolid();
   app.resetMorph();
@@ -744,7 +767,7 @@ if (process.env.MORPH_DUMP) {
     for (let i = 0; i <= 120; i++) {
       let sum = 0;
       for (let j = 0; j <= 40; j++) {
-        const xm = i * (300 / 120), ym = j * (400 / 40);
+        const xm = i * (D.cross / 120), ym = j * (D.along / 40);
         sum += app.bedZ(xm * (width / 300), ym * (height / 400)) * D.mpbu;
       }
       prof.push(sum / 41);

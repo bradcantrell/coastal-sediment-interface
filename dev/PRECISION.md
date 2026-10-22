@@ -65,8 +65,32 @@ are properties of the physics, not of a fit, and they have not improved.
 
 ## Progression
 
-53.4 -> 65.8 -> 73.0 -> 76.4. Only the first step is a physics change (the bar amplitude).
-The rest are corrections to the measurement, and they should be read that way:
+53.4 -> 65.8 -> 73.0 -> 76.4 -> **66.6 with a second case**. That last drop is the point.
+
+## The second XBeach case
+
+`dev/xbeach-reference-2.json` is a moderate-energy case — Hs 2.0 m, Tp 9 s, 0.3 m surge,
+same sediment. **It was never used for calibration.** Its only job is to test whether the
+storm tuning generalises.
+
+It does not:
+
+| case | rmse | bar position | erosion err | accretion err |
+|---|---|---|---|---|
+| storm (calibrated) | 0.163 m | 20 m | 0.10 | 0.09 |
+| moderate (held out) | 0.084 m | 60 m | 0.34 | 0.93 |
+
+The held-out case has a *better* profile rmse and a much worse bar. The app puts roughly
+double XBeach's sand in the crest, 60 m from where XBeach puts it, while eroding about a
+third too little. The single-case score of 76.4 was flattering.
+
+The forcing split explains it: `stormIntensity()` returns 0.62 for the storm and 0.12 for the
+moderate case. Those are different regimes, and the bar amplitude was tuned at one of them.
+
+Scoring now averages the four XBeach sub-scores across both cases, so a change that helps the
+storm and hurts the moderate case no longer reads as an improvement.
+
+## Probes corrected along the way
 
 - **calm drift was measuring a transient.** The bed settles a one-time 0.21 m at a handful of
   cells, then holds *exactly* still -- the second 100 days move 0.000 m. Scoring ongoing drift

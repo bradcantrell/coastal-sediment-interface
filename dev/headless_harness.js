@@ -347,6 +347,15 @@ try {
 }
 
 const app = globalThis.__app;
+
+// Forcing cases, hoisted above every block that scores or exports them.
+const STORM_COND = { Hs: 3.4, Tp: 12.0, dirDeg: -28, spreadDeg: 18,
+                     waterLevel: 0.8, slr: 0, d50: 0.30, slope: 0.020 };
+// Moderate-energy companion case: half the wave height, shorter period, weaker surge. If the
+// bar calibration has generalised it should still hold here; if it learned one storm it will not.
+const CASE2_COND = { Hs: 2.0, Tp: 9.0, dirDeg: -15, spreadDeg: 10,
+                     waterLevel: 0.3, slr: 0, d50: 0.30, slope: 0.020 };
+
 if (!app.setup) { console.error("FAIL: no setup()"); process.exit(1); }
 
 let failures = 0;
@@ -1080,7 +1089,8 @@ if (process.env.SCORE) {
   }
 
   // --- storm bed-change profile against the recorded XBeach run
-  out.storm_dz = runStormProfile(2.5);
+  out.storm_dz = runProfile(STORM_COND, 2.5);
+  out.case2_dz = runProfile(CASE2_COND, 2.5);
 
   fs.writeFileSync(process.env.SCORE, JSON.stringify(out, null, 1));
   console.log("precision probes -> " + process.env.SCORE);
@@ -1130,6 +1140,7 @@ if (process.env.BENCH) {
               `longshore ${(long / full * 100).toFixed(0)}%, particles ${(parts / full * 100).toFixed(0)}%`);
 }
 
+
 // ============================================================ XBeach comparison, against the recorded run
 {
   const fs = require('fs');
@@ -1157,8 +1168,8 @@ if (process.env.BENCH) {
       return { r: (da > 0 && db > 0) ? num / Math.sqrt(da * db) : 0, n: idx.length };
     };
 
-    const dzEqual = runStormProfile(m.modelDays);
-    const dzCal   = runStormProfile(m.browserDaysForPattern || m.modelDays);
+    const dzEqual = runProfile(STORM_COND, m.modelDays);
+    const dzCal   = runProfile(STORM_COND, m.browserDaysForPattern || m.modelDays);
     const eq = corr(dzEqual);
     const ca = corr(dzCal);
     const dz = dzCal;
@@ -1193,10 +1204,10 @@ if (process.env.BENCH) {
   }
 }
 
+
 // ============================================================ storm case for XBeach comparison
-if (process.env.XB_STORM) {
-  Object.assign(app.cond, { Hs: 3.4, Tp: 12.0, dirDeg: -28, spreadDeg: 18,
-                            waterLevel: 0.8, slr: 0, d50: 0.30, slope: 0.020 });
+if (process.env.XB_STORM || process.env.XB_CASE2) {
+  Object.assign(app.cond, process.env.XB_CASE2 ? CASE2_COND : STORM_COND);
   app.obstacles.length = 0;
   app.buildSolid();
   app.resetMorph();
@@ -1208,14 +1219,15 @@ if (process.env.XB_STORM) {
     { name: 'bed.dep',     data: e2.encode(sx.bed)     },
     { name: 'jonswap.txt', data: e2.encode(sx.jonswap) },
   ]);
-  require('fs').writeFileSync(process.env.XB_STORM, Buffer.from(z2));
-  console.log(`wrote storm case -> ${process.env.XB_STORM}`);
+  const dst = process.env.XB_CASE2 || process.env.XB_STORM;
+  require('fs').writeFileSync(dst, Buffer.from(z2));
+  console.log(`wrote case -> ${dst}`);
 }
 
 // ============================================================ storm profile, shared
-function runStormProfile(modelDays) {
-  Object.assign(app.cond, { Hs: 3.4, Tp: 12.0, dirDeg: -28, spreadDeg: 18,
-                            waterLevel: 0.8, slr: 0, d50: 0.30, slope: 0.020 });
+
+function runProfile(cond, modelDays) {
+  Object.assign(app.cond, cond);
   app.obstacles.length = 0;
   app.buildSolid();
   app.resetMorph();
@@ -1243,7 +1255,7 @@ function runStormProfile(modelDays) {
 
 // ============================================================ profile dump
 if (process.env.MORPH_DUMP) {
-  const dz = runStormProfile(process.env.MORPH_STORM ? 25 : 2.5);
+  const dz = runProfile(STORM_COND, process.env.MORPH_STORM ? 25 : 2.5);
   require('fs').writeFileSync(process.env.MORPH_DUMP, JSON.stringify({ dz }));
   console.log(`wrote profile -> ${process.env.MORPH_DUMP}`);
 }

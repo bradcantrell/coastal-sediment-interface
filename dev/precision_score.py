@@ -44,51 +44,62 @@ def clamp01(x):
     return max(0.0, min(1.0, x))
 
 
-def score(probes, ref):
-    dz = probes["storm_dz"]
-    xb = ref["finalDz"]
+def case_scores(dz, xb, dx):
     n = min(len(dz), len(xb))
     rmse = (sum((dz[i] - xb[i]) ** 2 for i in range(n)) / n) ** 0.5
 
-    def peak(a):
-        i = min(range(len(a)), key=lambda k: a[k])
-        j = max(range(len(a)), key=lambda k: a[k])
-        return a[i], i, a[j], j
+    e_b = min(dz)
+    a_b = max(dz)
+    a_j = dz.index(a_b)
+    E_b = min(xb)
+    A_b = max(xb)
+    A_j = xb.index(A_b)
 
-    e_b, e_i, a_b, a_j = peak(dz)
-    E_b, E_i, A_b, A_j = peak(xb)
-
-    dx = ref["meta"]["reachCross"] / (len(xb) - 1)
     barpos = abs(a_j * dx - A_j * dx)
-    ero_rel = abs(e_b - E_b) / max(abs(E_b), 1e-6)
-    acc_rel = abs(a_b - A_b) / max(abs(A_b), 1e-6)
+    ero = abs(e_b - E_b) / max(abs(E_b), 1e-6)
+    acc = abs(a_b - A_b) / max(abs(A_b), 1e-6)
+    return {
+        "rmse": rmse, "barpos": barpos, "erosion": ero, "accretion": acc,
+        "profile": clamp01(1 - rmse / TOL["profile_rmse_m"]),
+        "barpos_s": clamp01(1 - barpos / TOL["barpos_m"]),
+        "erosion_s": clamp01(1 - ero / TOL["erosion_rel"]),
+        "accretion_s": clamp01(1 - acc / TOL["accretion_rel"]),
+    }
+
+
+def score(probes, refs):
+    # Both XBeach cases are scored and averaged. Only the storm case was ever used for
+    # calibration, so a change that helps the storm and hurts the moderate case is not an
+    # improvement -- it is a fit.
+    cases = []
+    for name, dz in (("storm", probes.get("storm_dz")), ("moderate", probes.get("case2_dz"))):
+        if not dz:
+            continue
+        ref = refs[name]
+        xb = ref["finalDz"]
+        cases.append((name, case_scores(dz, xb, ref["meta"]["reachCross"] / (len(xb) - 1))))
 
     s = {
         "calm_rate":   clamp01(1 - probes.get("calm_late_max", 0) / TOL["calm_rate_m"]),
         "calm_settle": clamp01(1 - probes.get("init_diseq_rms", 0) / TOL["calm_settle_rms_m"]),
-        "flux":      clamp01(1 - probes["flux_resid"] / TOL["flux_resid"]),
-        "cerc":      clamp01((probes["cerc_r2"] - TOL["cerc_r2"]) / (1 - TOL["cerc_r2"])),
-        "volume":    clamp01(1 - probes["vol_drift"] / TOL["vol_drift"]),
-        "profile":   clamp01(1 - rmse / TOL["profile_rmse_m"]),
-        "barpos":    clamp01(1 - barpos / TOL["barpos_m"]),
-        "erosion":   clamp01(1 - ero_rel / TOL["erosion_rel"]),
-        "accretion": clamp01(1 - acc_rel / TOL["accretion_rel"]),
+        "flux":        clamp01(1 - probes["flux_resid"] / TOL["flux_resid"]),
+        "cerc":        clamp01((probes["cerc_r2"] - TOL["cerc_r2"]) / (1 - TOL["cerc_r2"])),
+        "volume":      clamp01(1 - probes["vol_drift"] / TOL["vol_drift"]),
     }
+    for key in ("profile", "barpos_s", "erosion_s", "accretion_s"):
+        s[key.replace("_s", "")] = sum(c[1][key] for c in cases) / max(len(cases), 1)
+
     measured = {
         "calm_rate_m": round(probes.get("calm_late_max", 0), 5),
-        "calm_settle_m": round(probes.get("init_diseq_rms", 0), 5),
-        "calm_settle_max": round(probes["calm_drift"], 4),
+        "calm_settle_rms_m": round(probes.get("init_diseq_rms", 0), 5),
         "flux_resid": round(probes["flux_resid"], 4),
         "cerc_r2": round(probes["cerc_r2"], 5),
         "vol_drift": probes["vol_drift"],
-        "profile_rmse_m": round(rmse, 4),
-        "barpos_m": round(barpos, 1),
-        "erosion_rel": round(ero_rel, 4),
-        "accretion_rel": round(acc_rel, 4),
-        "shoaling_exp": round(probes.get("shoaling_exp") or 0, 3),
+        "cases": {n: {k: round(v, 4) for k, v in c.items()
+                      if k in ("rmse", "barpos", "erosion", "accretion")} for n, c in cases},
     }
-    total = sum(s[k] * W[k] for k in s) / sum(W.values()) * 100
-    return s, measured, total
+    total = sum(s.values()) / len(s) * 100
+    return s, measured, total, cases
 
 
 def main():
@@ -96,9 +107,10 @@ def main():
         raise SystemExit("usage: precision_score.py <probes.json> [--json]")
     probes = json.load(open(sys.argv[1], encoding="utf-8"))
     here = __file__.replace("\\", "/").rsplit("/", 1)[0]
-    ref = json.load(open(here + "/xbeach-reference.json", encoding="utf-8"))
+    refs = {"storm": json.load(open(here + "/xbeach-reference.json", encoding="utf-8")),
+            "moderate": json.load(open(here + "/xbeach-reference-2.json", encoding="utf-8"))}
 
-    s, m, total = score(probes, ref)
+    s, m, total, cases = score(probes, refs)
 
     if "--json" in sys.argv:
         print(json.dumps({"score": round(total, 1), "subscores": {k: round(v, 3) for k, v in s.items()},
@@ -107,21 +119,25 @@ def main():
 
     print("PRECISION SCORE\n")
     rows = [
-        ("calm_rate",   "calm drift, 2nd 100d (m)",  m["calm_rate_m"],   TOL["calm_rate_m"]),
-        ("calm_settle", "seeded diseq rms (m)",      m["calm_settle_m"], TOL["calm_settle_rms_m"]),
-        ("flux",      "flux residual",            m["flux_resid"],     TOL["flux_resid"]),
-        ("cerc",      "CERC r2",                  m["cerc_r2"],        TOL["cerc_r2"]),
-        ("volume",    "volume drift",             m["vol_drift"],      TOL["vol_drift"]),
-        ("profile",   "storm profile rmse (m)",   m["profile_rmse_m"], TOL["profile_rmse_m"]),
-        ("barpos",    "bar position err (m)",     m["barpos_m"],       TOL["barpos_m"]),
-        ("erosion",   "peak erosion rel err",     m["erosion_rel"],    TOL["erosion_rel"]),
-        ("accretion", "peak accretion rel err",   m["accretion_rel"],  TOL["accretion_rel"]),
+        ("calm_rate",   "calm drift, 2nd 100d (m)", m["calm_rate_m"],       TOL["calm_rate_m"]),
+        ("calm_settle", "seeded diseq rms (m)",     m["calm_settle_rms_m"], TOL["calm_settle_rms_m"]),
+        ("flux",        "flux residual",            m["flux_resid"],        TOL["flux_resid"]),
+        ("cerc",        "CERC r2",                  m["cerc_r2"],           TOL["cerc_r2"]),
+        ("volume",      "volume drift",             m["vol_drift"],         TOL["vol_drift"]),
     ]
     for key, label, val, tol in rows:
         flag = "  <-- AT LIMIT" if s[key] <= 0.001 else ""
-        print(f"  {label:24} {val:>10.5g}   tol {tol:<7g} score {s[key]:5.2f}{flag}")
-    print()
-    print(f"  COMPOSITE {total:.1f} / 100")
+        print(f"  {label:28} {val:>10.5g}   tol {tol:<7g} score {s[key]:5.2f}{flag}")
+
+    print("\n  XBeach cases (only the storm case was calibrated):")
+    for name, c in cases:
+        print(f"    {name:9} rmse {c['rmse']:.3f} m | barpos {c['barpos']:4.0f} m | "
+              f"ero {c['erosion']:5.2f} | acc {c['accretion']:5.2f}")
+    for key, label in (("profile", "profile rmse"), ("barpos", "bar position"),
+                       ("erosion", "peak erosion"), ("accretion", "peak accretion")):
+        print(f"    mean {label:16} score {s[key]:5.2f}")
+
+    print(f"\n  COMPOSITE {total:.1f} / 100")
     weakest = sorted(s, key=lambda k: s[k])[:2]
     print(f"  weakest: {', '.join(weakest)}")
 

@@ -20,9 +20,11 @@ years, and an XBeach case writer.
 
 Presets and teaching notes are **not built yet** (Phase 6).
 
-**The XBeach run gate is owed, not waived.** A case can be generated and validated
-structurally here, but it cannot be executed on this machine — there is no XBeach binary and
-no WSL or Docker. Agreement between the two models has therefore not been demonstrated.
+**XBeach status — half the gate is met.** A generated case has been built and run: it
+completes headless in ~3.5 minutes with exit 0 and produces `zb.dat`. But the plan's gate
+also asks for a bed change *in the same direction as the browser*, and **that part fails** —
+correlation between the two cross-shore change profiles is +0.07 with 39% sign agreement.
+The cause is known and is not a bug in the export: see "Agreement with XBeach" below.
 
 See `PLAN.md` for the full design and the phase gates.
 
@@ -83,7 +85,50 @@ the browser: at five sample corners the exported elevation matches `bedZ` to 0.0
 
 The archive is verified with Python's `zipfile` — `testzip()` reports all CRCs valid.
 
-**Not verified: that the case runs.** Nothing on this machine can execute it.
+### Running it
+
+Built and run on this machine with MSYS2 + gfortran 16.2.0, serial, no MPI, no netCDF:
+
+```
+./autogen.sh
+./configure --without-mpi --without-netcdf
+make              # serial: -j races the .mod files
+./src/xbeach/.libs/xbeach.exe
+```
+
+Three things are needed beyond a bare toolchain. `scripts/generate.py` produces the
+`.inc` files and imports `mako`. `mnemoniciso.F90` declares a `bind(c)` type containing
+`character(len=20)` components, which gfortran 16 rejects — relaxing `b_arraytype` to a
+plain `type` fixes it, because that type is used only inside `mnemoniciso.F90`. `carraytype`
+**must** keep `bind(c)`: `introspection.F90` passes it through a `bind(C)` procedure.
+
+Rebuild with `make clean` after patching; stale `.mod` files will otherwise reproduce the
+old error and look like the patch failed.
+
+### Agreement with XBeach
+
+The case runs. The two models do not agree, and the reason is structural rather than
+mechanical.
+
+| | XBeach | This interface |
+|---|---|---|
+| Change range | −0.70 … +0.73 m | −0.36 … +0.32 m |
+| Peak erosion | x = 232 m | x = 300 m (dune) |
+| Peak accretion | x = 175 m (bar) | x = 25–150 m (whole shoreface) |
+| Correlation, active zone | — | **+0.07** |
+
+XBeach moves sediment only where the hydrodynamics move it: a bar at the breakpoint, erosion
+landward of it, and essentially nothing on the offshore shelf. This interface relaxes the
+whole profile toward a Dean target **whether or not the waves justify it**, so its change is
+spread across the entire shoreface and the dune.
+
+Running a second identical window moves 94% as much as the first, which is the tell: this is
+steady relaxation toward a target roughly 40 relax-days away, not convergence. The exported
+case therefore agrees with the browser only where the Dean target happens to coincide with
+what the waves do — which, for this bed, is nowhere.
+
+Fixing it means replacing target-seeking morphology with flux-based transport, which is the
+same change that would give volume conservation and sea-level-rise retreat.
 
 ## Timeline
 
@@ -166,6 +211,8 @@ clipped groyne: inactive at year 5 (no change), active at year 13 (14.4 m of cha
 nourishment: not solid, raises the bed 5.00 m over 10 years
 xbeach: bed.dep 41 x 121, profile -8.00 / +7.50 m, round-trip 0.0000 m
 zip: 3 entries, all CRCs valid under python zipfile.testzip()
+xbeach run: exit 0, 22,183 timesteps, 211 s, zb.dat produced
+agreement: correlation +0.07, sign agreement 39% (does not agree)
 59 checks, 0 failures
 HARNESS PASS
 ```

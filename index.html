@@ -1240,7 +1240,9 @@ function buildXBeach(opts) {
   L.push('dryslp    = 1.0');
   L.push('');
   L.push('%%% Output %%%');
-  L.push('outputformat = netcdf');
+  // fortran = unformatted binary, which the plain (non-netCDF) executable supports.
+  // A build configured --with-netcdf can switch this to netcdf.
+  L.push('outputformat = fortran');
   L.push('tintg     = ' + Math.max(60, Math.round(tstop / 20)));
   L.push('nglobalvar = 3');
   L.push('zb');

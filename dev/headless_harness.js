@@ -731,3 +731,38 @@ console.log("\n=== xbeach export ===");
 console.log("");
 if (failures === 0) console.log("HARNESS PASS");
 else { console.log(`HARNESS FAIL — ${failures} check(s)`); process.exit(1); }
+
+// ============================================================ profile dump for XBeach comparison
+if (process.env.MORPH_DUMP) {
+  app.obstacles.length = 0;
+  app.buildSolid();
+  app.resetMorph();
+  app.setYear(0);
+
+  const sample = () => {
+    const prof = [];
+    for (let i = 0; i <= 120; i++) {
+      let sum = 0;
+      for (let j = 0; j <= 40; j++) {
+        const xm = i * (300 / 120), ym = j * (400 / 40);
+        sum += app.bedZ(xm * (width / 300), ym * (height / 400)) * D.mpbu;
+      }
+      prof.push(sum / 41);
+    }
+    return prof;
+  };
+
+  const before = sample();
+  const dtTotal = 21600 * 10;      // tstop * morfac = seconds of morphology, as exported
+  const steps = 400;
+  for (let k = 0; k < steps; k++) app.morphStep(dtTotal / steps);
+  const mid = sample();
+  for (let k = 0; k < steps; k++) app.morphStep(dtTotal / steps);
+  const after = sample();
+
+  const dz = mid.map((v, i) => v - before[i]);
+  const dz2 = after.map((v, i) => v - mid[i]);
+  require('fs').writeFileSync(process.env.MORPH_DUMP,
+    JSON.stringify({ dz, dz2, before, mid, after }));
+  console.log(`wrote browser profile -> ${process.env.MORPH_DUMP}`);
+}

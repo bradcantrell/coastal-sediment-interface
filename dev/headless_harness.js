@@ -82,6 +82,59 @@ global.document = {
 };
 global.navigator = { userAgent: "node", language: "en" };
 
+
+// ============================================================ software rasterizer (PRECISION=1)
+function makeRaster(w, h) {
+  const buf = new Float32Array(w * h * 4);          // RGBA, 0..255, source-over composited
+  let fillCol = [0, 0, 0, 255], strokeCol = [0, 0, 0, 255];
+  let doFill = true, doStroke = true;
+
+  const norm = (a) => {
+    if (a.length === 1) return [a[0], a[0], a[0], 255];
+    if (a.length === 2) return [a[0], a[0], a[0], a[1]];
+    if (a.length === 3) return [a[0], a[1], a[2], 255];
+    return [a[0], a[1], a[2], a[3]];
+  };
+
+  const px = (x, y, c) => {
+    if (x < 0 || y < 0 || x >= w || y >= h) return;
+    const i = ((y | 0) * w + (x | 0)) * 4;
+    const a = c[3] / 255;
+    if (a <= 0) return;
+    buf[i]     = buf[i]     * (1 - a) + c[0] * a;
+    buf[i + 1] = buf[i + 1] * (1 - a) + c[1] * a;
+    buf[i + 2] = buf[i + 2] * (1 - a) + c[2] * a;
+    buf[i + 3] = Math.min(255, buf[i + 3] + c[3]);
+  };
+
+  const g = {
+    width: w, height: h, _buf: buf,
+    clear() { buf.fill(0); },
+    background(...a) { const c = norm(a); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) px(x, y, c); },
+    fill(...a) { fillCol = norm(a); doFill = true; },
+    noFill() { doFill = false; },
+    stroke(...a) { strokeCol = norm(a); doStroke = true; },
+    noStroke() { doStroke = false; },
+    strokeWeight() {},
+    rect(x, y, ww, hh) {
+      if (!doFill) return;
+      const x0 = Math.round(x), y0 = Math.round(y);
+      const x1 = Math.round(x + ww), y1 = Math.round(y + hh);
+      for (let yy = y0; yy < y1; yy++) for (let xx = x0; xx < x1; xx++) px(xx, yy, fillCol);
+    },
+    point(x, y) { if (doStroke) px(Math.round(x), Math.round(y), strokeCol); },
+    ellipse(x, y, d) { if (doFill) px(Math.round(x), Math.round(y), fillCol); },
+    line(x1, y1, x2, y2) { if (doStroke) { px(x1, y1, strokeCol); px(x2, y2, strokeCol); } },
+    push() {}, pop() {}, translate() {}, rotate() {}, scale() {},
+    image() {}, text() {}, textAlign() {}, textSize() {}, triangle() {}, quad() {},
+    beginShape() {}, endShape() {}, vertex() {}, bezier() {}, arc() {}, curve() {},
+    loadPixels() {}, updatePixels() {},
+  };
+  return g;
+}
+
+globalThis.__rasters = [];
+
 let W = 1200, H = 800;
 Object.defineProperty(global, "windowWidth",  { get: () => W, set: v => W = v });
 Object.defineProperty(global, "windowHeight", { get: () => H, set: v => H = v });
@@ -98,7 +151,16 @@ Object.assign(global, {
   constrain: (v, a, b) => Math.min(Math.max(v, a), b),
   lerp: (a, b, t) => a + (b - a) * t,
   map: (v, a, b, c, d) => c + ((v - a) / ((b - a) || 1)) * (d - c),
-  random: (a, b) => (a === undefined ? Math.random() : (b === undefined ? Math.random() * a : a + Math.random() * (b - a))),
+  // Under PRECISION the RNG must be seeded: particle deposition is random, and an unstable
+  // bed makes a rendering comparison measure noise instead of the code change.
+  random: (() => {
+    let seed = 12345;
+    const rnd = () => {
+      if (process.env.PRECISION || process.env.SCORE) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+      return Math.random();
+    };
+    return (a, b) => (a === undefined ? rnd() : (b === undefined ? rnd() * a : a + rnd() * (b - a)));
+  })(),
   noise: () => 0.5, noiseDetail: noop, randomSeed: noop, frameRate: noop,
   keyIsDown: () => false, key: "", keyCode: 0, mouseIsPressed: false, mouseX: 0, mouseY: 0,
   mouseButton: "left", touches: [], cursor: noop, noCursor: noop,
@@ -110,7 +172,15 @@ Object.assign(global, {
   // p5 drawing API, at global scope (the app calls these bare, not on a context)
   createCanvas: () => ({ parent: noop, style: {}, elt: el("canvas"), id: () => "c" }),
   pixelDensity: noop, background: noop, noFill: noop, textFont: noop,
-  textWidth: () => 10, createGraphics: () => Object.assign(ctx(), { width: W, height: H }),
+  textWidth: () => 10,
+  createGraphics: (w, h) => {
+    if (process.env.PRECISION) {
+      const g = makeRaster(w || W, h || H);
+      globalThis.__rasters.push(g);
+      return g;
+    }
+    return Object.assign(ctx(), { width: W, height: H });
+  },
   loadImage: noop, redraw: noop, frameCount: 0, noLoop: noop, loop: noop,
   resizeCanvas: (w, h) => { W = w; H = h; },
   clear: noop, fill: noop, stroke: noop, noStroke: noop, strokeWeight: noop,
@@ -217,6 +287,13 @@ try {
   rApplyLong: typeof applyLongshore==='function'?applyLongshore:null,
   rApplyNourish: typeof applyNourishment==='function'?applyNourishment:null,
   rBarDist: typeof computeBarDistance==='function'?computeBarDistance:null,
+  bedSurfaceRef: () => (typeof bedSurface !== 'undefined' ? bedSurface : null),
+  // grid probes for the precision scorer
+  gridDims: () => ({ NX, NY, GW, GH }),
+  groupVel: (T, h) => groupVelocity(T, h),
+  waveAt: (i, j) => ({ H: waveH[IX(i, j)], depth: waveDepth[IX(i, j)],
+                       breaking: waveBreaking[IX(i, j)] ? 1 : 0 }),
+  bedAtIJ: (i, j) => bedZ(i * cellW, j * cellH) * M_PER_BED_UNIT,
   setPaused: (v) => { if (typeof paused !== 'undefined') paused = v; },
   isPaused: () => (typeof paused !== 'undefined' ? paused : null),
   resetMorph: typeof resetMorphology==='function' ? resetMorphology : null,
@@ -797,6 +874,140 @@ console.log("\n=== xbeach export ===");
   // ~38 ms. Reaching 16.67 would need a coarser morphology grid or a slower model time --
   // a fidelity trade, not an optimisation, so it is left as a decision rather than assumed.
   check(msPerFrame < 46, "frame time no worse than the recorded 38 ms", `${msPerFrame.toFixed(2)} ms`);
+}
+
+// ============================================================ precision dump
+if (process.env.PRECISION_DUMP) {
+  const fs = require('fs');
+  app.resetMorph();
+  // Particle deposition is random, so it must be cleared or the dump differs run to run and
+  // the metric measures noise instead of the code change.
+  if (typeof depoGrid !== "undefined" && depoGrid) depoGrid.fill(0);
+  if (typeof particles !== "undefined" && particles) particles.length = 0;
+  for (let i = 0; i < 4; i++) app.morphStep(86400 * 5);   // give the bed something to draw
+  app.rUpdateBedBuffer();
+  {
+    const st = app.getState();
+    let s = 0;
+    for (let i = 0; i < st.morph.length; i++) s += st.morph[i];
+    let s2 = 0;
+    if (st.depo) for (let i = 0; i < st.depo.length; i++) s2 += st.depo[i];
+    const probe = [];
+    for (let x = 100; x < 1200; x += 250) probe.push(app.bedZ(x, 400).toFixed(4));
+    console.log("  diag bed sum " + s.toFixed(2) + " depo " + s2.toFixed(2) +
+                " bar " + Number(st.bar).toFixed(3) + " storm " + Number(st.storm).toFixed(4) +
+                " probe " + probe.join(","));
+  }
+  const g = app.bedSurfaceRef();
+  if (!g || !g._buf) { console.error('no rasterized bedSurface'); process.exit(1); }
+  fs.writeFileSync(process.env.PRECISION_DUMP, Buffer.from(g._buf.buffer));
+  console.log("precision dump -> " + process.env.PRECISION_DUMP + " " + g.width + "x" + g.height);
+}
+
+
+// ============================================================ precision probes
+if (process.env.SCORE) {
+  const fs = require("fs");
+  const out = {};
+  // Start from a clean, reproducible bed: residual deposition from earlier checks would
+  // otherwise leak into every probe.
+  if (typeof depoGrid !== "undefined" && depoGrid) depoGrid.fill(0);
+  if (typeof particles !== "undefined" && particles) particles.length = 0;
+
+  // --- calm drift: an equilibrium-seeded bed must not move at all under calm water
+  {
+    Object.assign(app.cond, { Hs: 0.6, Tp: 6.0, dirDeg: 0, spreadDeg: 0,
+                              waterLevel: 0, slr: 0, d50: 0.30, slope: 0.020 });
+    app.obstacles.length = 0; app.buildSolid();
+    app.resetMorph(); app.setYear(0);
+    app.waveFieldStep(); app.barDist();
+    for (let k = 0; k < 20; k++) app.morphStep(86400 * 5);
+    const m = app.getState().morph;
+    let maxd = 0;
+    for (let i = 0; i < m.length; i++) if (Math.abs(m[i]) > maxd) maxd = Math.abs(m[i]);
+    out.calm_drift = maxd * app.dims.mpbu;
+  }
+
+  // --- shoaling exponent against Green's law
+  {
+    const wave = [];
+    const g = app.gridDims();
+    const j = Math.max(2, Math.floor(g.NY / 2));
+    for (let i = 2; i < g.NX - 1; i++) {
+      const w = app.waveAt(i, j);
+      if (w.breaking) continue;
+      if (w.depth < 0.8 || w.depth > 5.0) continue;
+      if (!(w.H > 0)) continue;
+      wave.push([Math.log(w.depth), Math.log(w.H)]);
+    }
+    if (wave.length > 20) {
+      let sx = 0, sy = 0, sxx = 0, sxy = 0;
+      for (const [x, y] of wave) { sx += x; sy += y; sxx += x * x; sxy += x * y; }
+      const n = wave.length;
+      out.shoaling_exp = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+      out.shoaling_n = n;
+    } else {
+      out.shoaling_exp = null; out.shoaling_n = wave.length;
+    }
+
+    // Flux conservation: in the absence of breaking, H^2 * Cg * cos(theta) must be the same
+    // at every cell along a column. That is the invariant the march claims to conserve, and
+    // its exact value is known (constant), so the spread measures how well it is honoured.
+    const flux = [];
+    for (let i = 2; i < g.NX - 1; i++) {
+      const w = app.waveAt(i, j);
+      if (w.breaking || w.depth < 0.8 || !(w.H > 0)) continue;
+      flux.push(w.H * w.H * app.groupVel(app.cond.Tp, w.depth));
+    }
+    if (flux.length > 20) {
+      const mean = flux.reduce((a, b) => a + b, 0) / flux.length;
+      const sd = Math.sqrt(flux.reduce((a, b) => a + (b - mean) ** 2, 0) / flux.length);
+      out.flux_resid = sd / Math.max(Math.abs(mean), 1e-9);
+      out.flux_n = flux.length;
+    } else {
+      out.flux_resid = null; out.flux_n = flux.length;
+    }
+  }
+
+  // --- CERC: Q must be proportional to sin(2*alpha)
+  {
+    const ang = [], q = [];
+    Object.assign(app.cond, { Hs: 1.5, Tp: 8.0, spreadDeg: 0, waterLevel: 0 });
+    for (let a = 5; a <= 40; a += 5) {
+      app.cond.dirDeg = a;
+      app.waveFieldStep(); app.barDist();
+      app.computeLongshore();
+      ang.push(Math.sin(2 * a * Math.PI / 180));
+      q.push(Math.abs(app.getState().qPeak || 0));
+    }
+    const n = q.length;
+    const mq = q.reduce((s, v) => s + v, 0) / n;
+    let ss = 0, st = 0, sq = 0;
+    for (let i = 0; i < n; i++) { ss += (ang[i] - ang.reduce((s, v) => s + v, 0) / n) ** 2; }
+    // fit q = k * sin(2a) through the origin
+    const k = q.reduce((s, v, i) => s + v * ang[i], 0) / Math.max(ang.reduce((s, v) => s + v * v, 0), 1e-9);
+    for (let i = 0; i < n; i++) { const pred = k * ang[i]; st += (q[i] - mq) ** 2; sq += (q[i] - pred) ** 2; }
+    out.cerc_r2 = st > 0 ? 1 - sq / st : 1;
+  }
+
+  // --- volume conservation under cross-shore transport
+  {
+    Object.assign(app.cond, { Hs: 1.2, Tp: 8.0, dirDeg: 0, spreadDeg: 0, waterLevel: 0 });
+    app.resetMorph(); app.waveFieldStep(); app.barDist();
+    for (let k = 0; k < 20; k++) app.morphStep(86400 * 5);
+    const sum = () => { const m = app.getState().morph; let t = 0; for (let i = 0; i < m.length; i++) t += m[i]; return t; };
+    const v0 = sum();
+    for (let k = 0; k < 20; k++) app.morphStep(86400 * 5);
+    const v1 = sum();
+    out.vol_drift = Math.abs(v1 - v0) / Math.max(Math.abs(v0), 1);
+    out.vol_abs = Math.abs(v1 - v0);
+  }
+
+  // --- storm bed-change profile against the recorded XBeach run
+  out.storm_dz = runStormProfile(2.5);
+
+  fs.writeFileSync(process.env.SCORE, JSON.stringify(out, null, 1));
+  console.log("precision probes -> " + process.env.SCORE);
 }
 
 console.log("");

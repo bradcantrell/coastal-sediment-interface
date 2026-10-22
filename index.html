@@ -852,7 +852,7 @@ function equilibriumZ(Y, storm, A) {
       const yb = Math.max(barDistanceM, 15);
       const w  = Math.max(0.22 * yb, 12);
       const t  = (Y - yb) / w;
-      h -= storm * 0.35 * conditions.Hs * Math.exp(-t * t);  // bar
+      h -= storm * 0.05 * conditions.Hs * Math.exp(-t * t);  // bar
     }
     return wl - h;
   }

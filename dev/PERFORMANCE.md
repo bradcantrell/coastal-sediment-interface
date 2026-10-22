@@ -5,9 +5,12 @@ profile; `dev/coastal_swarm.py` runs the adversarial review that found the first
 
 | | before | after |
 |---|---|---|
-| `updateBedBuffer()` | 99.0 ms | 16.5 ms |
-| `waveFieldStep()` | 10.3 ms | 7.8 ms |
-| frame | 136.5 ms (**7 fps**) | ~40 ms (**24 fps**) |
+| `updateBedBuffer()` | 99.0 ms | 9.9 ms |
+| `waveFieldStep()` | 10.3 ms | 7.1 ms |
+| `morphologyStep()` | 9.4 ms | 7.2 ms |
+| frame | 136.5 ms (**7 fps**) | 29.9 ms (**33 fps**) |
+
+Every one of these is bit-identical to its predecessor under the precision metric below.
 
 Three fixes, all from the swarm and all verified against the source before being applied:
 
@@ -23,8 +26,8 @@ Three fixes, all from the swarm and all verified against the source before being
   from the neighbouring cell and `k` is passed through. Identical results: max H 1.42 m,
   break 3.18 m at 4.19 m, runup 1.20 m, before and after.
 
-**24 fps is not 60.** What is left is the physics grid itself: 8.5 ms of wave field and
-9.4 ms of morphology over 300 × 200 cells. Getting under 16.67 ms needs a coarser morphology
+**33 fps is not 60.** What is left is the physics grid itself: 7.1 ms of wave field and
+7.2 ms of morphology over 300 × 200 cells. Getting under 16.67 ms needs a coarser morphology
 grid or a slower model time — a trade in fidelity, not an optimisation, so it is left as a
 decision rather than quietly assumed.
 

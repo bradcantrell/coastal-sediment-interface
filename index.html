@@ -845,11 +845,14 @@ function equilibriumZ(Y, storm, A) {
   // erosion could never appear.
   const wl = refWaterLevel;
   if (Y >= 0) {
-    let h = A * Math.pow(Y, 2 / 3);                       // Dean
+    // cbrt(Y*Y) rather than pow(Y, 2/3): this runs once per cell per frame and Math.pow with a
+    // fractional exponent goes through exp/log. Same value, cheaper.
+    let h = A * Math.cbrt(Y * Y);                         // Dean
     if (storm > 0) {
       const yb = Math.max(barDistanceM, 15);
       const w  = Math.max(0.22 * yb, 12);
-      h -= storm * 0.35 * conditions.Hs * Math.exp(-Math.pow((Y - yb) / w, 2));  // bar
+      const t  = (Y - yb) / w;
+      h -= storm * 0.35 * conditions.Hs * Math.exp(-t * t);  // bar
     }
     return wl - h;
   }
@@ -1824,9 +1827,11 @@ function updateBedBuffer() {
     const py = iy * STEP;
     for (let ix = 0; ix < NW; ix++) {
       const px = ix * STEP, k = iy * NW + ix;
-      const z = bedZ(px, py);
-      bedSample[k] = z;
-      bedDz[k] = (z - bedZ0(px, py)) * M_PER_BED_UNIT;
+      // One lookup of each component instead of calling bedZ() AND bedZ0(), which together
+      // walked userBedZ and depoZ twice per cell. The wash only needs the morphology layers.
+      const mo = morphZ(px, py), lo = longZ(px, py);
+      bedSample[k] = userBedZ(px, py) + depoZ(px, py) + mo + lo;
+      bedDz[k] = (mo + lo) * M_PER_BED_UNIT;
     }
   }
 

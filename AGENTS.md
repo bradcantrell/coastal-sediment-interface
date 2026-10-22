@@ -6,104 +6,151 @@ Browser-based coastal wave and beach simulator. Coastal sibling of `bradcantrell
 
 ## What it is
 
-Single file: `index.html` (HTML + CSS + p5.js canvas). No build step, no backend.
+Single file: `index.html` (~134 KB; HTML + CSS + p5.js canvas). No build step, no backend.
 p5.js 1.11.3 from cdnjs. Everything else is inline.
 
 **Scope boundary, settled:** two-dimensional plan form, one sediment class, no infragravity.
 Do not add a third dimension, multiple sediment classes, or infragravity without asking.
 
-**Visibility:** the repo is PRIVATE for now. That means GitHub Pages is unavailable on a free
-plan, so there is no hosted build — serve locally. Re-check with Brad before making it public.
+**Visibility:** repo is **public** — `bradcantrell/coastal-sediment-interface`. GitHub Pages is
+live at https://bradcantrell.github.io/coastal-sediment-interface/ and takes ~75 s to rebuild
+after a push. Going private **deletes the Pages configuration**; making it public again does
+not restore it — re-run `POST /repos/{owner}/{repo}/pages`.
 
-## Units
+## Units and geometry
 
 **Metres and seconds.** A deliberate departure from the tidal interface, which is
-dimensionless. Coastal design is metric-native — Hs in m, T in s, D50 in mm, transport in
-m³/yr — and students need real numbers to reason with.
+dimensionless. Coastal design is metric-native and students need real numbers to reason with.
 
-- Reach: 400 m alongshore (x) × 300 m cross-shore (y), offshore at y = 0.
+- **Cross-shore runs along x.** Offshore at x = 0, waterline at 0.74 · width, dune at the
+  right edge. Wave energy marches in +x. **Alongshore is y.**
+- Reach: 600 m cross-shore × 400 m alongshore. Canvas is 1200 × 800 px.
 - Bed elevations are stored in **bed units**; `M_PER_BED_UNIT = 0.05` m per unit.
-  Offshore shelf is −160 units (−8.0 m), waterline is 0, dune crest ~+180 units (+9 m).
-- `stillWaterZ` is the still-water level in bed units (0 = the drawn waterline).
+- `conditions.d50` is in **millimetres**; `params.txt` wants **metres**. Divide by 1000.
 
-## Physics (current state — Phase 0)
+## Physics (current state — Phase 5 complete)
 
-The fluvial Stam solver is **gone**. In its place:
+The fluvial Stam solver is **gone**. In its place, one analytic pass per frame:
 
-- `wavenumberK(T, h)` — Newton solution of ω² = gk·tanh(kh). Converges in ≤12 iterations;
-  returns the deep-water guess if it fails.
-- `groupVelocity(T, h)` — Cg = nC, the quantity shoaling conserves.
-- `waveFieldStep()` — per cell: depth from `bedZ`, shoaling H = H0·√(Cg0/Cg), then a
-  breaking cap H ≤ γh with γ = 0.78. Writes `waveH`, `waveDepth`, and the orbital velocity
-  into `u`/`v`.
+- `wavenumberK(T, h)` — Newton on ω² = gk·tanh(kh), ≤12 iterations, deep-water fallback.
+- `groupVelocity(T, h)` — Cg = nC.
+- `transformComponent(i, comp)` — marches j = 1..NY per column carrying `{H, θ, k, Cg}`.
+  Snell refraction `sinθ = sinθ_prev·(k_prev/k)`; shoaling on **oblique flux**
+  `H = H_prev·√(flux_prev/flux)` with `flux = Cg·cosθ`; breaking via Battjes–Janssen
+  `Qb = exp(−(γh/Hrms)²)`; hard cap `H ≤ γh` at `γ = 0.78`. Stores `waveAngle`.
+- `combineComponents()` — `H² = Σ wᵢHᵢ²` over the directional bins.
+- `computeRunup()` — Stockdon et al. (2006) eq. 18, `R2 = 1.1(η + S)`, plus Iribarren.
+- `morphologyStep()` — cross-shore relaxation toward a Dean equilibrium.
+- `computeLongshore()` / `applyLongshore()` — CERC, conservative flux divergence.
+- `applyNourishment()` — sand placed by `kind: 'nourish'` objects.
 
-**Not yet modelled:** refraction, surf-zone dissipation (Battjes–Janssen), runup, any
-sediment transport law, morphology. The breaking cap is a cliff, not a decay, so `waveH`
-reads flat inside the surf zone. That is Phase 1.
+**Not modelled:** diffraction (a structure casts a hard shadow), infragravity, shoreline
+retreat under sea-level rise, and shoreline feedback into the breaking angle.
+
+## Bed model — three layers, and why
+
+`bedZ = userBedZ + depoZ + morphZ + longZ`
+
+- `userBedGrid` / `depoGrid` — carried over from the fluvial shell; dredge/fill and particles.
+- `morphGrid` — cross-shore relaxation. **Target-seeking, NOT volume-conserving.**
+- `longGrid` — longshore transport. **Conservative.** Kept in its own layer so the
+  non-conservative relaxation cannot erase the accretion that proves a groyne works.
+- `bedZ0 = userBedZ + depoZ` — the bed without morphology; used for the change overlay and as
+  the fixed anchor for the Dean target.
+
+The two morphology layers are summed into the bed but **not coupled**.
+
+## XBeach agreement — what is and is not true
+
+The exported case builds and runs. Against a recorded XBeach storm run on the same bed:
+
+- **Spatial pattern: correlation 0.818.** Erosion and accretion land in the right places.
+- **Rate: wrong by ~10×.** The interface moves roughly 15× less sediment in the same time.
+- The correlation is **invariant to run time**, because a linear relaxation scales without
+  changing shape. The shape is right; only the rate and the volume budget are wrong.
+
+Do not claim numerical agreement. The comparison runs in the harness against
+`dev/xbeach-reference.json`.
+
+## Timeline
+
+**Model years, not seconds.** `modelYears` accumulates from the morphology step and
+`timelineLoopTime()` reads it, so the timeline and the bed share one clock. `timelineDuration`
+and every clip `{start, dur}` are in model years; default loop 20 yr.
 
 ## Data model
 
-Unchanged from the fluvial shell, which is the point — feature parity:
+- `depoGrid` / `userBedGrid` / `morphGrid` / `longGrid` — Float32Array on a `DEPO_CELL` = 4 px grid.
+- `bedPoints` — user-drawn stations. **When empty the bed falls back to `defaultCoastalBedZ`.**
+- `particles[]` — suspended sediment, seeded across the water, not as an inflow stream.
+- `obstacles[]` — `{type, x, y, w, h, rotation, kind?, clips:[{start, dur}]}` or poly.
+  **`clips: []` means the object is NEVER active** — `isObstacleActive` returns false.
+- `waveComponents[]` — `[{Hs, Tp, dirDeg, weight}]`. Monochromatic is `N = 1`.
 
-- `depoGrid` / `userBedGrid` — bed grids (Float32Array, `DEPO_CELL` = 4 px).
-- `bedZ(x, y)` = `userBedZ` + `depoZ`. Bed edits and deposition write `depoGrid`.
-- `bedPoints` — user-drawn stations. **When empty, the bed falls back to
-  `defaultCoastalBedZ(x, y)`**, which is what gives the app its beach profile on load.
-- `particles[]` — suspended sediment.
-- `obstacles[]` — `{type, x, y, w, h, rotation, clips: [{start, dur}]}` or
-  `{type:'poly', x, y, rotation, points:[...], clips:[...]}`.
-- `waveComponents[]` — `[{Hs, Tp, dirDeg, weight}]`. **One component today**, but the array
-  shape is the contract: directional spread must be a parameter, never a refactor.
+## The default profile IS the equilibrium
 
-## Key functions
+`defaultCoastalBedZ` is built **from** the equilibrium: Dean `h = A·y^(2/3)` offshore,
+`BEACH_SLOPE` landward, `DUNE_SLOPE` beyond the berm crest. Under calm the disequilibrium is
+zero, so the bed does not lurch on load.
 
-- `waveFieldStep()` — the physics step. Called from `draw()` where `velocityStep()` used to be.
-- `buildSolidMask()` — carries over verbatim from the fluvial build; rasterizes obstacles
-  into `solid`.
-- `getVelocityAt(px, py)` — unchanged contract: returns `{vx, vy}` in px/frame.
-- `timelineLoopTime()`, `isObstacleActive(ob)` — unchanged; `clips` drive object existence.
-- `defaultCoastalBedZ(x, y)` — the archetype profile in bed units.
-- `computeUserBedZ` — falls through to `defaultCoastalBedZ` when no stations are drawn.
-- `paintBed(raise)` — dredge/fill; conceptually nourishment/scrape in docs only, not yet renamed.
+- `BEACH_SLOPE` (0.10) is the morphology's beach gradient. **`conditions.slope` is not the
+  same thing** — that is the foreshore gradient feeding Stockdon runup and the Iribarren
+  number. Using it for morphology dragged a 10% beach toward a 2% ramp.
+- `morphologyStep` **must not relax the dune** (`z > refWaterLevel + BERM_TOP_M`). Dean says
+  nothing about a dune.
+- The profile references **datum 0, never `conditions.waterLevel`**. If the bed follows the
+  live water level, a surge lifts the seabed with the water and nothing can erode.
 
-## Testing — no browser screenshot harness on this box
+## Testing
 
-Two gates, both must pass:
-
-1. **Syntax** — extract the `<script>` body with a Python regex to a temp `.js`, `node --check`.
-2. **Behaviour** — `node dev/headless_harness.js <extracted.js>`. Mocks p5 and the DOM,
-   runs `setup()` plus 30 `draw()` frames, then asserts the wave field has wet cells.
-
-Current expected output:
 ```
-setup() OK
-30 draw() frames OK
-wave field: 11040 wet cells, 3864 dry, max depth 8.00 m, max H 1.51 m
-HARNESS PASS
+node dev/headless_harness.js index.html      # 63 checks
 ```
 
-**The harness has already caught one silent failure**: `userBedZ()` returned 0 whenever
-`bedPoints` was empty, so the coastal profile was never reached and the field came out
-empty. If the wet-cell count drops to zero, suspect the bed accessors first.
+`node --check` alone is **not** a gate — it passes on a silently empty field.
 
-## Pitfalls
+The harness parses the real markup for slider `value=""` defaults and `<select>` first options.
+**Mocked DOM controls that return "0" have already produced a false pass** (Phase 1 reported
+`max H 0.00 m` with every check green). Do not stub controls by hand.
 
-- `bedPoints` is empty by default. `userBedZ` MUST fall through to `defaultCoastalBedZ`,
-  or both the render and the physics silently go flat.
+## Pitfalls — each of these cost real time
+
+- `bedPoints` is empty by default. `userBedZ` MUST fall through to `defaultCoastalBedZ`.
 - Bed units are not metres. Multiply by `M_PER_BED_UNIT` before any physics.
-- `draw()` calls `waveFieldStep()`, which calls `buildSolidMask()` — obstacles must be
-  rasterized before the field is computed, or structures do not block waves.
-- Mouse handlers MUST ignore non-canvas clicks (`e.target.tagName !== 'CANVAS'`), or the
-  structure popup deselects on click.
-- `paintBed` needs the click-vs-drag threshold, or a click-select also dredges.
-- Sliders inherited from the fluvial shell (`inflow`, etc.) still drive fluvial-named
-  variables. **Do not relabel them to coastal terms until Phase 1 actually rewires them** —
-  a "wave energy" label on a slider that does not control wave energy is worse than a
-  stale name.
+- `GW`/`GH` snapshotted at load time are **zero** — `setup()` assigns them later. Use getters.
+- A Dean target anchored to its own moving shoreline is degenerate and diverges. Anchor once.
+- Re-anchoring on water level cancels the storm signal exactly. Anchor once.
+- The default profile must be **continuous by construction**; a vertical step at the berm
+  means the waterline cannot migrate and no storm can erode the upper beach.
+- A conservative process **nets to zero**. Do not test it with a signed sum — use Σ|change|.
+- A structure thinner than the grid step turns the transport gradient into a one-row spike.
+  The transport field is smoothed over six rows; that is numerical, not physics.
+- When a measured number looks wrong, **check the measurement before the physics**. Three
+  separate "physics failures" in this project were test errors: a frozen-phase velocity, a
+  signed sum over a conservative process, and an assumed 800 px canvas.
 - CRLF→LF warnings on commit are benign (Windows).
+
+## XBeach build (native Windows, no WSL, no Docker)
+
+```
+/c/msys64/usr/bin/bash.exe dev/build-xbeach-msys2.sh [destination]
+```
+
+Default destination `D:/workspace/xbeach-src`; binary at `<destination>/src/xbeach/.libs/xbeach.exe`.
+Verified from a clean clone. Two traps:
+
+- `scripts/generate.py` imports `mako` and produces all 27 `.inc` files. Without it the build
+  fails on `chartoindex.inc` with a "No rule to make target" that looks unrelated.
+- `mnemoniciso.F90` declares `bind(c)` types with `character(len=20)` components, which
+  gfortran 16 rejects. Relax **`b_arraytype` only** to a plain `type` — it is used solely
+  inside that file. `carraytype` **must** keep `bind(c)` or `introspection.F90` fails.
+
+`make clean` after patching, or stale `.mod` files reproduce the old error and make the fix
+look like it failed. MSYS2 has no `git` of its own — it is a declared dependency.
 
 ## Related
 
 - Fluvial: `D:/workspace/sediment-interface` (`index.html`, 67 functions, 88 KB).
-- Tidal: `D:/workspace/tidal-sediment-interface` (30 KB, dimensionless).
+- Tidal: `D:/workspace/tidal-sediment-interface` (Venice lagoon sibling).
+- XBeach source/build: `D:/workspace/xbeach-src`.
 - Design rationale and phase gates: `PLAN.md`.

@@ -529,9 +529,11 @@ let runupR2 = 0, runupSetup = 0, runupSwash = 0, iribarren = 0;
 let breakHb = 0, breakDepth = 0, breakCount = 0;
 
 /** Newton solution of the linear dispersion relation w^2 = g k tanh(k h). */
-function wavenumberK(T, h) {
+function wavenumberK(T, h, kHint) {
   const w2 = Math.pow(2 * Math.PI / T, 2);
-  let k = w2 / GRAV;                                  // deep-water first guess
+  // Seed from the neighbouring cell when one is available: adjacent depths are close, so
+  // this converges in two or three iterations instead of marching from the deep-water guess.
+  let k = (kHint && isFinite(kHint) && kHint > 0) ? kHint : w2 / GRAV;
   for (let it = 0; it < 12; it++) {
     const th = Math.tanh(k * h);
     const f  = GRAV * k * th - w2;
@@ -546,9 +548,11 @@ function wavenumberK(T, h) {
 }
 
 /** Group velocity Cg = n*C from linear theory. */
-function groupVelocity(T, h) {
+function groupVelocity(T, h, kKnown) {
   const hh = Math.max(h, 0.05);
-  const k  = wavenumberK(T, hh);
+  // The caller has usually just solved for k at this same depth. Re-solving it here doubled
+  // the dispersion cost of every cell in the march.
+  const k  = (kKnown && isFinite(kKnown) && kKnown > 0) ? kKnown : wavenumberK(T, hh);
   const kh = k * hh;
   const c  = (2 * Math.PI / T) / k;
   const n  = 0.5 * (1 + (2 * kh) / Math.max(Math.sinh(2 * kh), 1e-9));
@@ -616,8 +620,8 @@ function transformComponent(ci, comp) {
 
       if (h <= 0.05 || solid[idx]) { out[idx] = 0; continue; }
 
-      const k  = wavenumberK(T, h);
-      const Cg = groupVelocity(T, h);
+      const k  = wavenumberK(T, h, kPrev);
+      const Cg = groupVelocity(T, h, k);
 
       // refraction: alongshore (y) wavenumber k*sin(theta) conserved
       let sinT = Math.sin(thPrev) * (kPrev / k);
@@ -874,6 +878,8 @@ function computeBarDistance() {
 }
 
 /** One morphology step over dtModel seconds of model time. */
+let _morphScratch = null;
+
 function morphologyStep(dtModel) {
   if (!morphGrid || !morphEnabled || dtModel <= 0) return;
 
@@ -891,13 +897,15 @@ function morphologyStep(dtModel) {
 
   let maxEr = 0, maxAc = 0;
 
-  const u    = new Float64Array(GW);
-  const un   = new Float64Array(GW);
-  const diag = new Float64Array(GW);
-  const low  = new Float64Array(GW);
-  const up   = new Float64Array(GW);
-  const rhs  = new Float64Array(GW);
-  const act  = new Uint8Array(GW);
+  // Reused across frames: allocating seven typed arrays per frame was pure GC pressure.
+  if (!_morphScratch || _morphScratch.length !== GW) {
+    _morphScratch = {
+      u: new Float64Array(GW), un: new Float64Array(GW), diag: new Float64Array(GW),
+      low: new Float64Array(GW), up: new Float64Array(GW), rhs: new Float64Array(GW),
+      act: new Uint8Array(GW),
+    };
+  }
+  const { u, un, diag, low, up, rhs, act } = _morphScratch;
 
   for (let gy = 0; gy < GH; gy++) {
     const xShore = shoreRefAt(gy);
@@ -1796,57 +1804,84 @@ function drawParticles() {
 }
 
 // ── Bed surface render ──
+let bedSample = null, bedDz = null;
+
 function updateBedBuffer() {
   rebuildUserBedGrid();
   bedSurface.clear();
 
-  // Morphology-change wash. The height ramp below only colours the subaerial bed, so a
-  // bar or a groyne fillet — both underwater — would otherwise be invisible. Warm is
-  // accretion, cool is erosion; the layer is the difference from the base bed.
-  const ovStep = 8;
-  for (let ox = 0; ox < width; ox += ovStep) {
-    for (let oy = 0; oy < height; oy += ovStep) {
-      const dz = (bedZ(ox, oy) - bedZ0(ox, oy)) * M_PER_BED_UNIT;
+  // Sample the bed ONCE per cell and let the wash, the height ramp and the contours all read
+  // the same array. The earlier version called bedZ() independently in each of the three
+  // passes -- around half a million lookups per refresh -- and that single function was 99 ms
+  // of a 136 ms frame.
+  const STEP = 4;
+  const NW = Math.ceil(width / STEP), NH = Math.ceil(height / STEP);
+  if (!bedSample || bedSample.length !== NW * NH) {
+    bedSample = new Float32Array(NW * NH);
+    bedDz = new Float32Array(NW * NH);
+  }
+  for (let iy = 0; iy < NH; iy++) {
+    const py = iy * STEP;
+    for (let ix = 0; ix < NW; ix++) {
+      const px = ix * STEP, k = iy * NW + ix;
+      const z = bedZ(px, py);
+      bedSample[k] = z;
+      bedDz[k] = (z - bedZ0(px, py)) * M_PER_BED_UNIT;
+    }
+  }
+
+  const ovStep = 8, os = ovStep / STEP;
+
+  // Morphology-change wash. The height ramp below only colours the subaerial bed, so a bar
+  // or a groyne fillet -- both underwater -- would otherwise be invisible. Warm is accretion,
+  // cool is erosion; the layer is the difference from the base bed.
+  for (let iy = 0; iy < NH; iy += os) {
+    for (let ix = 0; ix < NW; ix += os) {
+      const dz = bedDz[iy * NW + ix];
       if (Math.abs(dz) < 0.02) continue;
       const t = Math.min(1, Math.abs(dz) / 0.8);
       if (dz > 0) bedSurface.fill(255, 190, 90, 25 + t * 95);
       else        bedSurface.fill(90, 160, 255, 25 + t * 95);
-      bedSurface.rect(ox, oy, ovStep, ovStep);
+      bedSurface.rect(ix * STEP, iy * STEP, ovStep, ovStep);
     }
   }
-  let bedMaxZ=160, step=8;
+
+  // Subaerial height ramp.
+  const bedMaxZ = 160;
   bedSurface.noStroke();
-  for (let px=0; px<width; px+=step) {
-    for (let py=0; py<height; py+=step) {
-      let z=bedZ(px,py); if (z<=0) continue;
-      let t=Math.min(1, z/bedMaxZ);
-      bedSurface.fill(40+t*80, 20+t*35, 10+t*15, 10+t*40);
-      bedSurface.rect(px,py,step,step);
+  for (let iy = 0; iy < NH; iy += os) {
+    for (let ix = 0; ix < NW; ix += os) {
+      const z = bedSample[iy * NW + ix];
+      if (z <= 0) continue;
+      const t = Math.min(1, z / bedMaxZ);
+      bedSurface.fill(40 + t * 80, 20 + t * 35, 10 + t * 15, 10 + t * 40);
+      bedSurface.rect(ix * STEP, iy * STEP, ovStep, ovStep);
     }
   }
-  let cStep=4, levels=[20,40,60,80,100,120,140];
-  for (let lvl of levels) {
-    let lAlpha=25+(lvl/bedMaxZ)*50;
-    for (let py=0; py<height; py+=cStep) {
-      let prevZ=bedZ(0,py);
-      for (let px=cStep; px<width; px+=cStep) {
-        let currZ=bedZ(px,py);
-        if ((prevZ-lvl)*(currZ-lvl)<0 && prevZ>0 && currZ>0) {
-          let t=(lvl-prevZ)/(currZ-prevZ), cx=(px-cStep)+t*cStep;
-          bedSurface.stroke(255,200,130,lAlpha); bedSurface.strokeWeight(0.5); bedSurface.point(cx,py);
+
+  // Contours, straight off the sampled grid -- no further bed lookups.
+  const levels = [20, 40, 60, 80, 100, 120, 140];
+  for (const lvl of levels) {
+    bedSurface.stroke(255, 200, 130, 25 + (lvl / bedMaxZ) * 50);
+    bedSurface.strokeWeight(0.5);
+    for (let iy = 0; iy < NH; iy++) {
+      const row = iy * NW, py = iy * STEP;
+      for (let ix = 1; ix < NW; ix++) {
+        const prevZ = bedSample[row + ix - 1], currZ = bedSample[row + ix];
+        if ((prevZ - lvl) * (currZ - lvl) < 0 && prevZ > 0 && currZ > 0) {
+          const t = (lvl - prevZ) / (currZ - prevZ);
+          bedSurface.point((ix - 1) * STEP + t * STEP, py);
         }
-        prevZ=currZ;
       }
     }
-    for (let px=0; px<width; px+=cStep) {
-      let prevZ=bedZ(px,0);
-      for (let py=cStep; py<height; py+=cStep) {
-        let currZ=bedZ(px,py);
-        if ((prevZ-lvl)*(currZ-lvl)<0 && prevZ>0 && currZ>0) {
-          let t=(lvl-prevZ)/(currZ-prevZ), cy=(py-cStep)+t*cStep;
-          bedSurface.stroke(255,200,130,lAlpha); bedSurface.strokeWeight(0.5); bedSurface.point(px,cy);
+    for (let ix = 0; ix < NW; ix++) {
+      const px = ix * STEP;
+      for (let iy = 1; iy < NH; iy++) {
+        const prevZ = bedSample[(iy - 1) * NW + ix], currZ = bedSample[iy * NW + ix];
+        if ((prevZ - lvl) * (currZ - lvl) < 0 && prevZ > 0 && currZ > 0) {
+          const t = (lvl - prevZ) / (currZ - prevZ);
+          bedSurface.point(px, (iy - 1) * STEP + t * STEP);
         }
-        prevZ=currZ;
       }
     }
   }
@@ -2264,7 +2299,8 @@ function setup() {
 function draw() {
   if (!paused) {
     simTime += DT;
-    buildSolidMask();
+    // waveFieldStep() rasterizes obstacles itself; calling it here too ran the mask twice
+    // per frame for nothing.
     waveFieldStep();
     const _dtF = (typeof deltaTime === 'number' ? Math.min(deltaTime, 60) : 16.7) / 1000;
     const dtModel = _dtF * modelDaysPerSec * 86400;      // model seconds this frame

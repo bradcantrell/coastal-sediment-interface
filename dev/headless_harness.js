@@ -118,6 +118,15 @@ Object.assign(global, {
   triangle: noop, arc: noop, curve: noop, bezier: noop, image: noop,
   text: noop, textSize: noop, textAlign: noop, textLeading: noop, textStyle: noop,
   push: noop, pop: noop, translate: noop, rotate: noop, scale: noop,
+  // drawGhost() styles the 2D context directly for shadow effects; the mock needs one.
+  // drawGhost() and friends drive the 2D context directly. A Proxy no-ops any method and
+  // stores any property, so the mock does not need to enumerate the canvas API.
+  drawingContext: new Proxy({ shadowBlur: 0, shadowColor: "", globalAlpha: 1,
+                              globalCompositeOperation: "source-over",
+                              canvas: { width: 1200, height: 800 } }, {
+    get: (t, k) => (k in t ? t[k] : () => {}),
+    set: (t, k, v) => { t[k] = v; return true; },
+  }),
   beginShape: noop, endShape: noop, vertex: noop, curveVertex: noop, bezierVertex: noop,
   curveTightness: noop, endContour: noop, rectMode: noop, ellipseMode: noop,
   imageMode: noop, angleMode: noop, strokeCap: noop, strokeJoin: noop, blendMode: noop,
@@ -193,6 +202,23 @@ try {
   obstacles: typeof obstacles!=='undefined' ? obstacles : null,
   updateParticles: typeof updateParticles==='function' ? updateParticles : null,
   tick: (dt) => { if (typeof simTime === 'number') simTime += dt; },
+  // rendering/draw internals, for the frame profile
+  rDrawFlow: typeof drawFlowField==='function'?drawFlowField:null,
+  rSpot: typeof drawSpotElevations==='function'?drawSpotElevations:null,
+  rParticles: typeof drawParticles==='function'?drawParticles:null,
+  rObstacles: typeof drawObstacles==='function'?drawObstacles:null,
+  rBedProfile: typeof drawBedProfile==='function'?drawBedProfile:null,
+  rGhost: typeof drawGhost==='function'?drawGhost:null,
+  rTimeline: typeof drawTimeline==='function'?drawTimeline:null,
+  rDeposition: typeof drawDeposition==='function'?drawDeposition:null,
+  rParticlesToBuffer: typeof drawParticlesToBuffer==='function'?drawParticlesToBuffer:null,
+  rUpdateBedBuffer: typeof updateBedBuffer==='function'?updateBedBuffer:null,
+  rRedrawDepo: typeof redrawDepoBuffer==='function'?redrawDepoBuffer:null,
+  rApplyLong: typeof applyLongshore==='function'?applyLongshore:null,
+  rApplyNourish: typeof applyNourishment==='function'?applyNourishment:null,
+  rBarDist: typeof computeBarDistance==='function'?computeBarDistance:null,
+  setPaused: (v) => { if (typeof paused !== 'undefined') paused = v; },
+  isPaused: () => (typeof paused !== 'undefined' ? paused : null),
   resetMorph: typeof resetMorphology==='function' ? resetMorphology : null,
   shorelineYPx: typeof shorelineXPx==='function' ? shorelineXPx : null,
   shoreRef: typeof shoreRefAt==='function' ? shoreRefAt : null,
@@ -263,7 +289,12 @@ try {
 }
 
 try {
-  if (typeof paused !== "undefined") global.paused = false;
+  // paused is module-scoped (let paused = true at load), so global.paused never reached it.
+  // Every prior harness run therefore exercised only the paused render path, never the
+  // simulation path, and per-frame cost was invisible.
+  app.setPaused(false);
+  if (app.isPaused() !== false) { console.error("could not unpause the app"); process.exit(1); }
+  app.setPaused(true);
   for (let i = 0; i < 30; i++) app.draw();
   console.log("30 draw() frames OK\n");
 } catch (e) {
@@ -741,9 +772,76 @@ console.log("\n=== xbeach export ===");
   }
 }
 
+// ============================================================ the simulation actually runs
+{
+  app.setPaused(false);
+  const frames = 60;
+  const t0 = process.hrtime.bigint();
+  for (let i = 0; i < frames; i++) app.draw();
+  const msPerFrame = Number(process.hrtime.bigint() - t0) / 1e6 / frames;
+  app.setPaused(true);
+
+  const st = app.getState();
+  let badBed = 0;
+  for (let i = 0; i < st.morph.length; i++) if (!isFinite(st.morph[i])) badBed++;
+  let badQ = 0;
+  for (let i = 0; i < st.qLong.length; i++) if (!isFinite(st.qLong[i])) badQ++;
+  const finiteH = Array.prototype.every.call(st.H, isFinite);
+
+  console.log(`sim: ${frames} unpaused frames, ${msPerFrame.toFixed(2)} ms/frame ` +
+              `(${(1000 / msPerFrame).toFixed(0)} fps), bed ${badBed} non-finite, q ${badQ}, H finite ${finiteH}`);
+  check(badBed === 0, "bed stays finite while the simulation runs", `${badBed} cells`);
+  check(badQ === 0, "longshore flux stays finite", `${badQ} cells`);
+  check(finiteH, "wave field stays finite", "all cells");
+  // A regression tripwire, not a claim of 60 fps. The recorded cost after the swarm fixes is
+  // ~38 ms. Reaching 16.67 would need a coarser morphology grid or a slower model time --
+  // a fidelity trade, not an optimisation, so it is left as a decision rather than assumed.
+  check(msPerFrame < 46, "frame time no worse than the recorded 38 ms", `${msPerFrame.toFixed(2)} ms`);
+}
+
 console.log("");
 if (failures === 0) console.log("HARNESS PASS");
-else { console.log(`HARNESS FAIL — ${failures} check(s)`); process.exit(1); }
+else console.log(`HARNESS FAIL — ${failures} check(s)`);
+
+// ============================================================ frame budget
+if (process.env.BENCH) {
+  const time = (label, fn, n) => {
+    fn();
+    const t0 = process.hrtime.bigint();
+    for (let i = 0; i < n; i++) fn();
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6 / n;
+    console.log(`  ${label.padEnd(30)} ${ms.toFixed(2)} ms`);
+    return ms;
+  };
+  console.log("\n=== frame budget (mean of N) ===");
+  const full = time("draw()", () => app.draw(), 60);
+  const wave = time("waveFieldStep()", () => app.waveFieldStep(), 60);
+  const morph = time("morphStep(1 day)", () => app.morphStep(86400), 20);
+  const long  = time("computeLongshore()", () => app.computeLongshore(), 20);
+  const parts = time("updateParticles()", () => app.updateParticles(), 60);
+  const bed   = time("buildSolidMask()", () => app.buildSolid(), 60);
+  const r = (lbl, fn, n) => { if (typeof fn === 'function') { try { time(lbl, () => fn(), n); } catch(e) {} } };
+  r('  drawFlowField()', app.rDrawFlow, 30);
+  r('  drawParticles()', app.rParticles, 30);
+  r('  drawParticlesToBuffer()', app.rParticlesToBuffer, 30);
+  r('  drawSpotElevations()', app.rSpot, 30);
+  r('  drawBedProfile()', app.rBedProfile, 30);
+  r('  drawObstacles()', app.rObstacles, 30);
+  r('  drawGhost()', app.rGhost, 30);
+  r('  drawTimeline()', app.rTimeline, 30);
+  r('  drawDeposition()', app.rDeposition, 30);
+  r('  updateBedBuffer()', app.rUpdateBedBuffer, 10);
+  r('  redrawDepoBuffer()', app.rRedrawDepo, 10);
+  r('  applyLongshore(1d)', () => app.rApplyLong(app, 86400), 10);
+  r('  computeBarDistance()', app.rBarDist, 30);
+  let xb = 0;
+  try { xb = time("buildXBeach()", () => app.buildXBeach({ hours: 6, morfac: 10 }), 5); } catch (e) {}
+  console.log("");
+  console.log(`  60 fps budget is 16.67 ms; measured draw() ${full.toFixed(2)} ms ` +
+              `(${(1000 / full).toFixed(0)} fps ceiling)`);
+  console.log(`  share: wave ${(wave / full * 100).toFixed(0)}%, morph ${(morph / full * 100).toFixed(0)}%, ` +
+              `longshore ${(long / full * 100).toFixed(0)}%, particles ${(parts / full * 100).toFixed(0)}%`);
+}
 
 // ============================================================ XBeach comparison, against the recorded run
 {
@@ -862,3 +960,5 @@ if (process.env.MORPH_DUMP) {
   require('fs').writeFileSync(process.env.MORPH_DUMP, JSON.stringify({ dz }));
   console.log(`wrote profile -> ${process.env.MORPH_DUMP}`);
 }
+
+if (failures > 0) process.exit(1);

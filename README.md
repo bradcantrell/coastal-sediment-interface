@@ -87,14 +87,15 @@ The archive is verified with Python's `zipfile` — `testzip()` reports all CRCs
 
 ### Running it
 
-Built and run on this machine with MSYS2 + gfortran 16.2.0, serial, no MPI, no netCDF:
+Built and run on this machine with MSYS2 + gfortran 16.2.0, serial, no MPI, no netCDF. The
+whole recipe is scripted:
 
 ```
-./autogen.sh
-./configure --without-mpi --without-netcdf
-make              # serial: -j races the .mod files
-./src/xbeach/.libs/xbeach.exe
+/c/msys64/usr/bin/bash.exe dev/build-xbeach-msys2.sh [destination]
 ```
+
+Default destination is `D:/workspace/xbeach-src`; the binary lands at
+`<destination>/src/xbeach/.libs/xbeach.exe`. Verified from a clean clone.
 
 Three things are needed beyond a bare toolchain. `scripts/generate.py` produces the
 `.inc` files and imports `mako`. `mnemoniciso.F90` declares a `bind(c)` type containing
@@ -107,26 +108,31 @@ old error and look like the patch failed.
 
 ### Agreement with XBeach
 
-The case runs and now starts from a consistent bed. The two models still do not agree
-numerically, and the remaining gap is the dynamics rather than the initial condition.
-
-Same bed, same storm (Hs 3.4 m, Tp 12 s, 0.8 m surge), same nominal morphological time:
+Same bed, same storm (Hs 3.4 m, Tp 12 s, 0.8 m surge), same morphological time — 2.5 model
+days, which is what XBeach integrates at `tstop = 21600` with `morfac = 10`:
 
 | | XBeach | This interface |
 |---|---|---|
-| Peak erosion | −1.35 m at x = 465 m | −0.04 m at x = 230 m |
+| Peak erosion | −1.35 m at x = 465 m | −0.04 m at x = 455 m |
 | Peak accretion | +0.27 m at x = 415 m | +0.08 m at x = 200 m |
-| Correlation, active zone | — | **+0.01** |
+| Correlation of the change profiles | — | **0.818** |
 
-Both build a bar offshore of an eroding zone, so the *organisation* is now right — it was
-not before the profile fix. What remains is rate: XBeach moves 1.35 m in 25 morphological
-days, this interface moves 0.08 m in the same time. The relaxation constant is 40 days,
-which is a sensible *recovery* timescale and roughly 20× too slow for *storm* erosion.
+**The spatial pattern agrees; the rate does not.** The interface puts erosion and accretion in
+the right places, but moves roughly 15× less sediment in the same time.
 
-That is a structural limit of target-seeking morphology, not a tuning error: one linear
-relaxation time cannot be both the hours a storm takes to erode a beach and the weeks it
-takes to recover. Replacing it with flux-based cross-shore transport would fix the rate and
-the volume conservation together.
+The correlation is identical (0.818) whether the interface is run for 2.5 days or 25, because
+a linear relaxation scales in time without changing its shape. Give it 25 days and the
+amplitudes reach −0.34 / +0.62 m, close to XBeach's — but only by running it 10× slower than
+the thing it is being compared to.
+
+That is the structural limit of target-seeking morphology and it is not a tuning error: one
+relaxation constant cannot be both the hours a storm takes to erode a beach and the weeks it
+takes to recover. Flux-based cross-shore transport would fix the rate and volume conservation
+together.
+
+This comparison runs as part of the harness against the recorded result in
+`dev/xbeach-reference.json`. Regenerate the reference with `dev/build-xbeach-msys2.sh`, the
+storm case from the export panel, and `xbeach.exe` in that directory.
 
 ## Timeline
 

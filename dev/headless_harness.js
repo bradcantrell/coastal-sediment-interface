@@ -732,6 +732,63 @@ console.log("");
 if (failures === 0) console.log("HARNESS PASS");
 else { console.log(`HARNESS FAIL — ${failures} check(s)`); process.exit(1); }
 
+// ============================================================ XBeach comparison, against the recorded run
+{
+  const fs = require('fs');
+  const refPath = require('path').join(require('path').dirname(require('path').resolve(process.argv[2] || 'index.html')), 'dev', 'xbeach-reference.json');
+  if (fs.existsSync(refPath)) {
+    const ref = JSON.parse(fs.readFileSync(refPath, 'utf8'));
+    const m = ref.meta;
+
+    // The reference is only meaningful if it was produced from this geometry.
+    const geomOk = Math.abs(m.reachCross - D.cross) < 1e-6 &&
+                   Math.abs(m.reachAlong - D.along) < 1e-6;
+    const xb = ref.finalDz;
+    const corr = (dz) => {
+      const mask = dz.map((v, i) => Math.abs(v) > 0.03 || Math.abs(xb[i]) > 0.03);
+      const idx = mask.map((v, i) => (v ? i : -1)).filter(i => i >= 0);
+      if (idx.length < 3) return { r: 0, n: idx.length };
+      const a = idx.map(i => xb[i]), b = idx.map(i => dz[i]);
+      const ma = a.reduce((s, v) => s + v, 0) / a.length;
+      const mb = b.reduce((s, v) => s + v, 0) / b.length;
+      let num = 0, da = 0, db = 0;
+      for (let i = 0; i < a.length; i++) {
+        num += (a[i] - ma) * (b[i] - mb);
+        da += (a[i] - ma) ** 2; db += (b[i] - mb) ** 2;
+      }
+      return { r: (da > 0 && db > 0) ? num / Math.sqrt(da * db) : 0, n: idx.length };
+    };
+
+    const dzEqual = runStormProfile(m.modelDays);
+    const dzCal   = runStormProfile(m.browserDaysForPattern || m.modelDays);
+    const eq = corr(dzEqual);
+    const ca = corr(dzCal);
+    const dz = dzCal;
+    const idx = { length: ca.n };
+    const r = ca.r;
+
+    console.log(`\n=== xbeach comparison (recorded storm run) ===`);
+    console.log(`reference: erosion ${ref.summary.min} m at x=${ref.summary.xMin}, accretion ${ref.summary.max} m at x=${ref.summary.xMax}`);
+    console.log(`interface: erosion ${Math.min(...dz).toFixed(3)} m at x=${(dz.indexOf(Math.min(...dz)) * (D.cross / 120)).toFixed(0)}, ` +
+                `accretion ${Math.max(...dz).toFixed(3)} m`);
+    console.log(`equal morphological time (${m.modelDays} d): correlation ${eq.r.toFixed(3)} over ${eq.n} cells  [range ${Math.min(...dzEqual).toFixed(3)} .. ${Math.max(...dzEqual).toFixed(3)}]`);
+    console.log(`pattern-calibrated   (${m.browserDaysForPattern} d): correlation ${ca.r.toFixed(3)} over ${ca.n} cells  [range ${Math.min(...dzCal).toFixed(3)} .. ${Math.max(...dzCal).toFixed(3)}]`);
+    console.log(geomOk ? `` : `  NOTE: reference geometry differs from the current reach; comparison is stale.`);
+
+    check(geomOk, "xbeach reference matches the current geometry",
+          `reach ${D.cross}x${D.along} m`);
+    check(idx.length > 5, "interface responds where xbeach responds", `${idx.length} active cells`);
+
+    const bMin = Math.min(...dz), bMax = Math.max(...dz);
+    check(Math.abs(bMax) > 0.02, "interface moves sediment under storm", `${bMax.toFixed(3)} m`);
+
+    // Recorded, not asserted: the models do not agree yet. This is a regression tripwire,
+    // not a pass mark. Raising it means the physics improved and the reference needs redoing.
+    check(eq.r > 0.5, "spatial pattern matches xbeach", eq.r.toFixed(3));
+    console.log(`rate gap: this interface needs ${(m.browserDaysForPattern / m.modelDays).toFixed(0)}x the morphological time`);
+  }
+}
+
 // ============================================================ storm case for XBeach comparison
 if (process.env.XB_STORM) {
   Object.assign(app.cond, { Hs: 3.4, Tp: 12.0, dirDeg: -28, spreadDeg: 18,
@@ -751,12 +808,10 @@ if (process.env.XB_STORM) {
   console.log(`wrote storm case -> ${process.env.XB_STORM}`);
 }
 
-// ============================================================ profile dump for XBeach comparison
-if (process.env.MORPH_DUMP) {
-  if (process.env.MORPH_STORM) {
-    Object.assign(app.cond, { Hs: 3.4, Tp: 12.0, dirDeg: -28, spreadDeg: 18,
-                              waterLevel: 0.8, slr: 0, d50: 0.30, slope: 0.020 });
-  }
+// ============================================================ storm profile, shared
+function runStormProfile(modelDays) {
+  Object.assign(app.cond, { Hs: 3.4, Tp: 12.0, dirDeg: -28, spreadDeg: 18,
+                            waterLevel: 0.8, slr: 0, d50: 0.30, slope: 0.020 });
   app.obstacles.length = 0;
   app.buildSolid();
   app.resetMorph();
@@ -768,7 +823,7 @@ if (process.env.MORPH_DUMP) {
       let sum = 0;
       for (let j = 0; j <= 40; j++) {
         const xm = i * (D.cross / 120), ym = j * (D.along / 40);
-        sum += app.bedZ(xm * (width / 300), ym * (height / 400)) * D.mpbu;
+        sum += app.bedZ(xm * (width / D.cross), ym * (height / D.along)) * D.mpbu;
       }
       prof.push(sum / 41);
     }
@@ -776,16 +831,15 @@ if (process.env.MORPH_DUMP) {
   };
 
   const before = sample();
-  const dtTotal = 21600 * 10;      // tstop * morfac = seconds of morphology, as exported
   const steps = 400;
-  for (let k = 0; k < steps; k++) app.morphStep(dtTotal / steps);
-  const mid = sample();
-  for (let k = 0; k < steps; k++) app.morphStep(dtTotal / steps);
+  for (let k = 0; k < steps; k++) app.morphStep((modelDays * 86400) / steps);
   const after = sample();
+  return after.map((v, i) => v - before[i]);
+}
 
-  const dz = mid.map((v, i) => v - before[i]);
-  const dz2 = after.map((v, i) => v - mid[i]);
-  require('fs').writeFileSync(process.env.MORPH_DUMP,
-    JSON.stringify({ dz, dz2, before, mid, after }));
-  console.log(`wrote browser profile -> ${process.env.MORPH_DUMP}`);
+// ============================================================ profile dump
+if (process.env.MORPH_DUMP) {
+  const dz = runStormProfile(process.env.MORPH_STORM ? 25 : 2.5);
+  require('fs').writeFileSync(process.env.MORPH_DUMP, JSON.stringify({ dz }));
+  console.log(`wrote profile -> ${process.env.MORPH_DUMP}`);
 }

@@ -180,6 +180,12 @@ try {
   computeLongshore: typeof computeLongshore==='function' ? computeLongshore : null,
   applyLongshore: typeof applyLongshore==='function' ? applyLongshore : null,
   applyNourishment: typeof applyNourishment==='function' ? applyNourishment : null,
+  buildXBeach: typeof buildXBeach==='function' ? buildXBeach : null,
+  zipStore: typeof zipStore==='function' ? zipStore : null,
+  dirToNautical: typeof dirToNautical==='function' ? dirToNautical : null,
+  spreadToS: typeof spreadToS==='function' ? spreadToS : null,
+  xbBedAt: typeof xbBedAt==='function' ? xbBedAt : null,
+  cond: typeof conditions!=='undefined' ? conditions : null,
   setYear: (y) => { if (typeof modelYears === 'number') modelYears = y; },
   longshoreStats: typeof longshoreStats==='function' ? longshoreStats : null,
   longZFn: typeof longZ==='function' ? longZ : null,
@@ -607,6 +613,120 @@ check(zAfter > zBefore + 1.0, "nourishment raises the bed", `+${(zAfter - zBefor
 app.obstacles.length = 0;
 app.buildSolid();
 app.resetMorph();
+
+// ============================================================ PHASE 5: XBeach export
+console.log("\n=== xbeach export ===");
+{
+  const xb = app.buildXBeach({ hours: 6, morfac: 10 });
+  const P = {};
+  for (const line of xb.params.split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith('%') || !t.includes('=')) continue;
+    const k = t.split('=')[0].trim().toLowerCase();
+    const v = t.split('=').slice(1).join('=').trim();
+    P[k] = v;
+  }
+  console.log(`params.txt: ${xb.params.split("\n").length} lines, ${Object.keys(P).length} keywords`);
+
+  // ---- required keywords present, per the manual
+  const required = ['depfile','posdwn','nx','ny','dx','dy','tstop','instat','bcfile','zs0',
+                    'D50'.toLowerCase(),'rhos','por','ngd','morfac','morphology','outputformat'];
+  const missing = required.filter(k => !(k in P));
+  check(missing.length === 0, "all required keywords present", missing.length ? "missing " + missing.join(",") : "17 present");
+
+  // ---- orientations and units that are easy to get backwards
+  check(P.posdwn === '-1', "bed written positive up", `posdwn = ${P.posdwn}`);
+  const d50 = parseFloat(P['d50']);
+  const d50Expected = app.cond.d50 / 1000;
+  console.log(`D50: app ${app.cond.d50} mm -> params ${d50} m`);
+  check(Math.abs(d50 - d50Expected) < 1e-9, "D50 converted mm to m", `${d50} m`);
+
+  // ---- bed.dep shape and content
+  const rows = xb.bed.trim().split("\n").map(r => r.trim().split(/\s+/));
+  const nx = parseInt(P.nx, 10), ny = parseInt(P.ny, 10);
+  console.log(`bed.dep: ${rows.length} rows x ${rows[0].length} cols (expect ${ny + 1} x ${nx + 1})`);
+  check(rows.length === ny + 1, "bed.dep row count", `${rows.length}`);
+  check(rows.every(r => r.length === nx + 1), "bed.dep column count", `${rows[0].length}`);
+
+  let bad = 0;
+  const flat = [];
+  for (const r of rows) for (const v of r) { const z = parseFloat(v); if (!isFinite(z)) bad++; flat.push(z); }
+  check(bad === 0, "bed values all finite", `${bad} bad`);
+
+  const offshoreZ = flat[0];                       // i=0, j=0
+  const landZ = flat[nx];                          // i=nx, j=0
+  console.log(`profile: offshore ${offshoreZ.toFixed(2)} m, landward ${landZ.toFixed(2)} m`);
+  check(offshoreZ < -2, "offshore end is below datum", `${offshoreZ.toFixed(2)} m`);
+  check(landZ > 1, "landward end is above datum", `${landZ.toFixed(2)} m`);
+
+  // ---- the exported bed must match the browser at the same physical point.
+  // Independent of xbBedAt: recompute from bedZ by hand, so an axis or unit slip shows.
+  let worst = 0;
+  for (const [i, j] of [[0,0],[24,10],[60,20],[96,30],[120,40]]) {
+    const xm = i * (300 / nx), ym = j * (400 / ny);
+    const want = app.bedZ(xm * (width / 300), ym * (height / 400)) * D.mpbu;
+    const got = parseFloat(rows[j][i]);
+    worst = Math.max(worst, Math.abs(want - got));
+  }
+  console.log(`bed round-trip: worst |browser - exported| = ${worst.toFixed(4)} m`);
+  check(worst < 0.01, "exported bed matches the browser", `${worst.toFixed(4)} m`);
+
+  // ---- JONSWAP file
+  const J = {};
+  for (const line of xb.jonswap.split("\n")) {
+    const t = line.trim();
+    if (!t || !t.includes('=')) continue;
+    J[t.split('=')[0].trim().toLowerCase()] = parseFloat(t.split('=')[1]);
+  }
+  console.log(`jonswap: Hm0 ${J.hm0}, Tp ${J.tp}, mainang ${J.mainang}, s ${J.s}`);
+  check(Math.abs(J.hm0 - app.cond.Hs) < 1e-6, "Hm0 matches the interface", `${J.hm0} m`);
+  check(Math.abs(J.tp - app.cond.Tp) < 1e-6, "Tp matches the interface", `${J.tp} s`);
+  check(J.mainang >= 180 && J.mainang <= 360, "mainang inside the documented range", `${J.mainang}`);
+  check(J.s >= 1 && J.s <= 1000, "spreading s inside the documented range", `${J.s}`);
+  const fp = 1 / J.tp;
+  check(fp >= 0.0625 && fp <= 0.4, "peak frequency inside the documented range", `${fp.toFixed(4)} 1/s`);
+
+  // ---- angle mapping, both directions
+  const a0 = app.dirToNautical(0), a30 = app.dirToNautical(30), am30 = app.dirToNautical(-30);
+  console.log(`dir 0 -> ${a0}, dir +30 -> ${a30}, dir -30 -> ${am30} (nautical)`);
+  check(a0 === 270, "shore-normal is 270 nautical", `${a0}`);
+  check(a30 === 240 && am30 === 300, "oblique angles map symmetrically", `${a30} / ${am30}`);
+
+  // ---- the ZIP is a real ZIP: signature, entry count, CRCs
+  const enc = new TextEncoder();
+  const zip = app.zipStore([
+    { name: 'params.txt',  data: enc.encode(xb.params) },
+    { name: 'bed.dep',     data: enc.encode(xb.bed) },
+    { name: 'jonswap.txt', data: enc.encode(xb.jonswap) },
+  ]);
+  const dvz = new DataView(zip.buffer);
+  const sig = dvz.getUint32(0, true);
+  const eocdPos = zip.length - 22;
+  const entries = dvz.getUint16(eocdPos + 10, true);
+  const cdOffset = dvz.getUint32(eocdPos + 16, true);
+  console.log(`zip: ${(zip.length / 1024).toFixed(1)} KB, signature 0x${sig.toString(16)}, ${entries} entries`);
+  check(sig === 0x04034b50, "zip starts with a local file header", `0x${sig.toString(16)}`);
+  check(entries === 3, "zip holds three files", `${entries}`);
+  check(cdOffset > 0 && cdOffset < zip.length, "central directory offset is sane", `${cdOffset}`);
+
+  // CRC of the first entry must match a recomputed CRC of params.txt
+  const cNameLen = dvz.getUint16(26, true), cDataLen = dvz.getUint32(18, true);
+  const cStored = dvz.getUint32(14, true);
+  const dataStart = 30 + cNameLen;
+  let c = 0xFFFFFFFF;
+  const TBL = (() => { const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) { let x = n;
+      for (let k = 0; k < 8; k++) x = (x & 1) ? (0xEDB88320 ^ (x >>> 1)) : (x >>> 1);
+      t[n] = x >>> 0; } return t; })();
+  for (let i = dataStart; i < dataStart + cDataLen; i++) c = TBL[(c ^ zip[i]) & 0xFF] ^ (c >>> 8);
+  c = (c ^ 0xFFFFFFFF) >>> 0;
+  check(c === cStored, "zip entry CRC is correct", `0x${c.toString(16)}`);
+
+  if (process.env.XB_DUMP) {
+    require('fs').writeFileSync(process.env.XB_DUMP, Buffer.from(zip));
+    console.log(`wrote ${process.env.XB_DUMP}`);
+  }
+}
 
 console.log("");
 if (failures === 0) console.log("HARNESS PASS");

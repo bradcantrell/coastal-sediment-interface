@@ -13,13 +13,16 @@ deliberate — everything past it is what the case export is for.
 
 ## Status
 
-**Phase 4 — timeline objects.** The interface shell carries over from the fluvial Sediment
-Interface: all panels, particles, bed grids, obstacle choreography and timeline. On top of
-that: a wave transformation, cross-shore profile response, CERC longshore transport, and a
-timeline that runs on **model years** so an adaptation sequence plays against the morphology
-instead of against the wall clock.
+**Phase 5 — export.** The interface shell carries over from the fluvial Sediment Interface:
+all panels, particles, bed grids, obstacle choreography and timeline. On top of that: a wave
+transformation, cross-shore profile response, CERC longshore transport, a timeline on model
+years, and an XBeach case writer.
 
-Export and presets are **not built yet** (Phases 5–6).
+Presets and teaching notes are **not built yet** (Phase 6).
+
+**The XBeach run gate is owed, not waived.** A case can be generated and validated
+structurally here, but it cannot be executed on this machine — there is no XBeach binary and
+no WSL or Docker. Agreement between the two models has therefore not been demonstrated.
 
 See `PLAN.md` for the full design and the phase gates.
 
@@ -60,6 +63,27 @@ single row — a spike, not a beach. This is a numerical treatment, not physics.
 CERC is accurate to perhaps ±50% in absolute terms. The gates are therefore about behaviour
 — the zero at shore-normal, the peak at 45°, which side of a groyne gains sand — not about
 the absolute cubic metres per second.
+
+## Export
+
+The **xbeach** button writes a runnable case as a ZIP: `params.txt`, `bed.dep`, `jonswap.txt`.
+No library — the archive is built in the page.
+
+Three conversions are easy to get backwards, so they are stated in the code:
+
+- **`posdwn = -1`** — bed elevations positive up, matching `bedZ`. The alternative is
+  flipping every value in `bed.dep`.
+- **`D50` and `D90` are in metres in `params.txt`, not millimetres.** This interface works in
+  millimetres. Real cases carry `D50 = 0.0002` for 0.2 mm sand.
+- **`mainang` is nautical, 180–360, and is the direction waves come *from*.** Shore-normal in
+  this interface is `270`.
+
+`bed.dep` holds `(nx+1) × (ny+1)` values, one cross-shore transect per row. Verified against
+the browser: at five sample corners the exported elevation matches `bedZ` to 0.0000 m.
+
+The archive is verified with Python's `zipfile` — `testzip()` reports all CRCs valid.
+
+**Not verified: that the case runs.** Nothing on this machine can execute it.
 
 ## Timeline
 
@@ -140,7 +164,9 @@ groyne: updrift +0.0274 m, downdrift -0.0274 m
 timeline: year 7.5 -> 7.5, year 23.0 -> 3.0 (loop 20 yr)
 clipped groyne: inactive at year 5 (no change), active at year 13 (14.4 m of change)
 nourishment: not solid, raises the bed 5.00 m over 10 years
-39 checks, 0 failures
+xbeach: bed.dep 41 x 121, profile -8.00 / +7.50 m, round-trip 0.0000 m
+zip: 3 entries, all CRCs valid under python zipfile.testzip()
+59 checks, 0 failures
 HARNESS PASS
 ```
 

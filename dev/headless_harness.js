@@ -297,6 +297,7 @@ try {
   bedAtIJ: (i, j) => bedZ(i * cellW, j * cellH) * M_PER_BED_UNIT,
   setPaused: (v) => { if (typeof paused !== 'undefined') paused = v; },
   isPaused: () => (typeof paused !== 'undefined' ? paused : null),
+  setPaused: (v) => { if (typeof paused !== 'undefined') paused = v; },
   resetMorph: typeof resetMorphology==='function' ? resetMorphology : null,
   shorelineYPx: typeof shorelineXPx==='function' ? shorelineXPx : null,
   shoreRef: typeof shoreRefAt==='function' ? shoreRefAt : null,
@@ -304,6 +305,9 @@ try {
   // can reach below still water, which is the difference between a sea and a dry slope.
   bedStripZ: typeof bedStripZ==='function' ? bedStripZ : null,
   bedStripY: typeof bedStripY==='function' ? bedStripY : null,
+  setBedMode: (v) => { if (typeof bedMode !== 'undefined') bedMode = v; },
+  toggleBedMode: typeof toggleBedMode === 'function' ? toggleBedMode : null,
+  isPaused: () => (typeof paused !== 'undefined' ? paused : null),
   setBedPoints: (pts) => {
     if (typeof bedPoints === 'undefined') return false;
     bedPoints.length = 0;
@@ -1174,6 +1178,31 @@ if (process.env.SCORE) {
     const ridgeShallow = hAtDepth(4.5, 5.5, [-140, -100]);
     check(ridgeShallow > flatDeep * 1.02, "shallower water shoals the wave",
           `mean H at 7 m ${flatDeep.toFixed(2)} -> at 5 m ${ridgeShallow.toFixed(2)} m`);
+    app.setBedPoints([]); app.resetMorph();
+  }
+
+  // Drawing a bed profile must not throw. The x-section strip kept a reference to a variable
+  // that had been removed, so from the first placed point onward draw() threw every frame --
+  // which also froze the simulation and made bed mode impossible to leave. Nothing exercised
+  // this path, so it shipped.
+  if (app.setBedMode && app.setBedPoints) {
+    app.setBedPoints([{ x: 0, z: -140 }, { x: width * 0.5, z: -40 }, { x: width, z: 150 }]);
+    app.setBedMode(true);
+    let err = null;
+    try { app.draw(); } catch (e) { err = e.message; }
+    check(!err, "drawing a bed profile does not throw", err || "clean");
+    app.setBedMode(false);
+    if (app.toggleBedMode && app.isPaused && app.setPaused) {
+      app.setBedMode(false);
+      app.setPaused(false);                      // known starting state: running
+      const before = app.isPaused();
+      app.toggleBedMode();                       // enter bed mode
+      const during = app.isPaused();
+      app.toggleBedMode();                       // leave it
+      const after = app.isPaused();
+      check(during === true && after === before,
+            "leaving bed mode restores the run state", `paused ${before} -> ${during} -> ${after}`);
+    }
     app.setBedPoints([]); app.resetMorph();
   }
 

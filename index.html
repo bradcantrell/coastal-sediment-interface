@@ -292,6 +292,9 @@ let simTime = 0;
 
 // Bed profile
 let bedMode = false;
+// Entering bed mode pauses the sim; remember what it was so leaving restores it. Without this
+// the pause was one-way and the simulation could not be restarted from the keyboard.
+let bedWasPaused = false;
 let bedPoints = [];
 let bedXSections = [];
 let activeXSection = -1;
@@ -1900,6 +1903,7 @@ function updateBedBuffer() {
 const BED_STRIP_H = 160;
 const BED_Z_MIN = -150;                       // -7.5 m
 const BED_Z_MAX = 170;                        // +8.5 m
+const BED_Z_SPAN = BED_Z_MAX - BED_Z_MIN;
 function bedStripY(z) { return height - BED_STRIP_H * ((z - BED_Z_MIN) / (BED_Z_MAX - BED_Z_MIN)); }
 function bedStripZ(y) { return BED_Z_MIN + ((height - y) / BED_STRIP_H) * (BED_Z_MAX - BED_Z_MIN); }
 
@@ -1943,7 +1947,7 @@ function drawBedProfile() {
     let pt=bedPoints[si], baseZ=pt.z, sx=pt.x-xStripW/2;
     noStroke(); fill(si===activeXSection?'rgba(40,35,55,0.85)':'rgba(25,22,40,0.7)'); rect(sx,0,xStripW,stripY);
     stroke(40,40,55,40); strokeWeight(0.5);
-    for (let gz=20; gz<=bedMaxZ; gz+=20) { let gx=sx+xStripW-(gz/bedMaxZ)*xStripW; line(gx,0,gx,stripY); }
+    for (let gz=BED_Z_MIN+10; gz<BED_Z_MAX; gz+=20) { let gx=sx+xStripW-((gz-BED_Z_MIN)/BED_Z_SPAN)*xStripW; line(gx,0,gx,stripY); }
     stroke(si===activeXSection?'rgba(255,180,60,0.5)':'rgba(60,60,80,0.3)'); strokeWeight(1); noFill(); rect(sx,0,xStripW,stripY);
     noStroke(); fill(255,255,255,40); textAlign(CENTER,TOP); textSize(8); text('x'+Math.round(pt.x),pt.x,2);
     textAlign(RIGHT,BOTTOM); textSize(7); fill(255,255,255,25); text('hi',sx+2,stripY-2); textAlign(LEFT,BOTTOM); text('lo',sx+xStripW-12,stripY-2);
@@ -1953,16 +1957,16 @@ function drawBedProfile() {
       let pts=[...xsData.points].sort((a,b)=>a.y-b.y);
       stroke(255,180,60,180); strokeWeight(2); noFill(); beginShape();
       for (let p of pts) {
-        let vy=p.y/height*stripY, absZ=baseZ+p.z, vx=sx+xStripW-(absZ/bedMaxZ)*xStripW; vx=constrain(vx,sx,sx+xStripW);
+        let vy=p.y/height*stripY, absZ=baseZ+p.z, vx=sx+xStripW-((absZ-BED_Z_MIN)/BED_Z_SPAN)*xStripW; vx=constrain(vx,sx,sx+xStripW);
         vertex(vx,vy);
       }
       endShape();
       for (let p of pts) {
-        let vy=p.y/height*stripY, absZ=baseZ+p.z, vx=sx+xStripW-(absZ/bedMaxZ)*xStripW; vx=constrain(vx,sx,sx+xStripW);
+        let vy=p.y/height*stripY, absZ=baseZ+p.z, vx=sx+xStripW-((absZ-BED_Z_MIN)/BED_Z_SPAN)*xStripW; vx=constrain(vx,sx,sx+xStripW);
         fill(255,180,60,200); noStroke(); ellipse(vx,vy,5,5);
       }
     }
-    let refX=sx+xStripW-(baseZ/bedMaxZ)*xStripW; stroke(255,255,255,25); strokeWeight(0.5); line(refX,0,refX,stripY);
+    let refX=sx+xStripW-((baseZ-BED_Z_MIN)/BED_Z_SPAN)*xStripW; stroke(255,255,255,25); strokeWeight(0.5); line(refX,0,refX,stripY);
     if (si===activeXSection) { noFill(); stroke(255,200,100,80); strokeWeight(1.5); rect(sx-1,0,xStripW+2,stripY); }
   }
 }
@@ -2559,12 +2563,12 @@ function mousePressed(event) {
       let xsData=bedXSections.find(xs=>xs.x===pt.x);
       if (xsData&&xsData.points.length>0) {
         for (let pi=0;pi<xsData.points.length;pi++) {
-          let rp=xsData.points[pi], absZ=pt.z+rp.z, vy=rp.y/height*stripY, vx=sx+xStripW-(absZ/bedMaxZ)*xStripW;
+          let rp=xsData.points[pi], absZ=pt.z+rp.z, vy=rp.y/height*stripY, vx=sx+xStripW-((absZ-BED_Z_MIN)/BED_Z_SPAN)*xStripW;
           if (dist(mouseX,mouseY,vx,vy)<10) { editingXSStation={stationIdx:closestIdx,pointIdx:pi}; return; }
         }
       }
       if (mouseX>=sx&&mouseX<=sx+xStripW&&mouseY<stripY) {
-        let y=mouseY/stripY*height, relX=(mouseX-sx)/xStripW, absZ=(1-relX)*bedMaxZ, z=max(0,absZ-pt.z);
+        let y=mouseY/stripY*height, relX=(mouseX-sx)/xStripW, absZ=BED_Z_MIN+(1-relX)*BED_Z_SPAN, z=absZ-pt.z;
         let xsIdx=bedXSections.findIndex(xs=>xs.x===pt.x);
         if (xsIdx<0) { bedXSections.push({x:pt.x,points:[]}); xsIdx=bedXSections.length-1; }
         bedXSections[xsIdx].points.push({y:constrain(y,0,height),z}); bedXSections[xsIdx].points.sort((a,b)=>a.y-b.y);
@@ -2611,7 +2615,7 @@ function mouseDragged(event) {
       let xsData=bedXSections.find(xs=>xs.x===bedPoints[si].x);
       if (xsData&&pi<xsData.points.length) {
         let xStripW=60, sx=bedPoints[si].x-xStripW/2;
-        let relX=constrain((mouseX-sx)/xStripW,0,1), absZ=(1-relX)*bedMaxZ;
+        let relX=constrain((mouseX-sx)/xStripW,0,1), absZ=BED_Z_MIN+(1-relX)*BED_Z_SPAN;
         xsData.points[pi].z=max(0,absZ-bedPoints[si].z);
         xsData.points[pi].y=constrain(mouseY/stripY*height,0,height);
         updateBedBuffer(); updateBedThumb();
@@ -2633,6 +2637,13 @@ function mouseWheel(event) {
   ghostRotation=(ghostRotation+delta)%360; if(ghostRotation<0)ghostRotation+=360;
   if (selectedIdx>=0) obstacles[selectedIdx].rotation=ghostRotation;
   return false;
+}
+
+// Entering bed mode pauses the simulation; leaving it restores whatever it was. Pulled out of
+// keyPressed so the behaviour can be tested without synthesising key events.
+function toggleBedMode() {
+  if (bedMode) { bedMode = false; paused = bedWasPaused; }
+  else { bedWasPaused = paused; bedMode = true; paused = true; }
 }
 
 function keyPressed() {
@@ -2671,8 +2682,8 @@ function keyPressed() {
       return;
     }
   }
-  else if (key==='Escape') { selectedIdx=-1; dragging=false; resizeDrag=null; polyVertexDrag=null; polyPoints=[]; if(bedMode)bedMode=false; }
-  else if (key==='m'||key==='M') { bedMode=!bedMode; if(bedMode)paused=true; }
+  else if (key==='Escape') { selectedIdx=-1; dragging=false; resizeDrag=null; polyVertexDrag=null; polyPoints=[]; if(bedMode){bedMode=false; paused=bedWasPaused;} }
+  else if (key==='m'||key==='M') { toggleBedMode(); }
   else if (key==='s'||key==='S') { saveCanvas('sediment-'+floor(simTime),'png'); }
   return false;
 }

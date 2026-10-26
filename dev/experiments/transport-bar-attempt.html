@@ -1,0 +1,3059 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Coastal Sediment Interface</title>
+  <script>p5.disableFriendlyErrors = true;</script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.3/p5.min.js"></script>
+  <script src="bridge/case_generator.js"></script>
+  <style>
+    html, body {
+      margin: 0; padding: 0; overflow: hidden;
+      background: #080810; font-family: 'Courier New', monospace;
+    }
+    canvas { display: block; }
+
+    #sidebar {
+      position: fixed; right: 0; top: 0; bottom: 0;
+      width: 270px; background: #0c0c18;
+      border-left: 1px solid rgba(255,255,255,0.06);
+      padding: 12px 10px; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 5px;
+      z-index: 100; box-sizing: border-box;
+    }
+    #sidebar::-webkit-scrollbar { width: 3px; }
+    #sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+    #sidebar .sect-label {
+      font-size: 8px; text-transform: uppercase; letter-spacing: 1.5px;
+      color: rgba(255,255,255,0.2); padding: 4px 0 1px 0;
+      border-top: 1px solid rgba(255,255,255,0.05); margin-top: 2px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    #sidebar .ctrl-row {
+      display: flex; align-items: center; gap: 4px;
+      font-size: 9px; color: rgba(255,255,255,0.4);
+    }
+    #sidebar .ctrl-row label {
+      white-space: nowrap; display: flex; align-items: center; gap: 3px;
+    }
+    #sidebar .ctrl-row2 {
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    #sidebar input[type="range"] {
+      flex: 1; -webkit-appearance: none; appearance: none;
+      height: 3px; background: rgba(255,255,255,0.08);
+      border-radius: 2px; outline: none; cursor: ew-resize;
+    }
+    #z-scale {
+      flex: none !important;
+    }
+    #sidebar input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 8px; height: 8px; border-radius: 50%;
+      background: rgba(255,200,100,0.5); cursor: ew-resize;
+    }
+    #sidebar input[type="color"] {
+      width: 18px; height: 14px; border: none; border-radius: 2px;
+      background: none; cursor: pointer; padding: 0;
+    }
+    #sidebar .val { color: rgba(255,200,100,0.7); }
+    #sidebar .reset-btn {
+      font-size: 7px; background: none; border: 1px solid rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.2); border-radius: 2px; cursor: pointer;
+      padding: 1px 4px; transition: all 0.15s;
+    }
+    #sidebar .reset-btn:hover {
+      border-color: rgba(255,200,100,0.3); color: rgba(255,200,100,0.6);
+    }
+    #sidebar .ctrl-toggles {
+      display: flex; gap: 4px;
+    }
+    #sidebar .ctrl-toggles button {
+      flex: 1; padding: 3px 0; font-size: 9px;
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 2px;
+      cursor: pointer; background: none; color: rgba(255,255,255,0.3);
+      transition: all 0.15s;
+    }
+    #sidebar .ctrl-toggles button.tg-on {
+      color: rgba(255,200,100,0.8); border-color: rgba(255,200,100,0.4);
+      background: rgba(255,200,100,0.08);
+    }
+    #sidebar .ctrl-toggles button:hover {
+      border-color: rgba(255,255,255,0.25); color: rgba(255,255,255,0.5);
+    }
+
+    #hud {
+      position: fixed; top: 48px; left: 12px; z-index: 20;
+      font-size: 11px; color: rgba(255,255,255,0.45);
+      pointer-events: none; line-height: 1.7; user-select: none;
+    }
+    #timeline-bar {
+      position: fixed; top: 0; left: 0;
+      width: calc(100vw - 270px);
+      max-height: 55vh; overflow-y: auto;
+      background: rgba(8,8,16,0.96);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+      z-index: 40; display: none;
+    }
+    #timeline-bar canvas { display: block; }
+    .hv { color: rgba(255,200,100,0.75); }
+    .hw { color: rgba(255,120,80,0.75); }
+
+    #help {
+      position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%);
+      font-size: 10px; color: rgba(255,255,255,0.25);
+      pointer-events: none; user-select: none; z-index: 10;
+      text-align: center; transition: opacity 0.3s;
+    }
+
+    #export-result {
+      font-size: 10px; color: rgba(255,255,255,0.4); line-height: 1.5;
+      pointer-events: none; max-width: 260px;
+    }
+  </style>
+</head>
+<body>
+<div id="sidebar">
+    <div id="sidebar-stats" style="font-size:10px;color:rgba(255,255,255,0.4);line-height:1.6;margin-bottom:4px;">
+      sim-time: <span class="hv" id="simtime">0.0</span>s &nbsp; mobile: <span class="hv" id="mobile">0</span><br>
+      deposited: <span class="hv" id="deposited">0</span> &nbsp; obstacles: <span class="hv" id="obstacles">0</span><br>
+      shape: <span class="hv" id="shape">rect</span> &phi;: <span class="hv" id="rot">0</span>&deg;<br>
+      year: <span class="hv" id="modelyear">0.0</span> &nbsp; <span class="hv" id="tlyear">0.0</span> / <span class="hv" id="tldur">20</span> yr<br>
+      <span class="hw" id="paused"></span>
+    </div>
+    <button id="export-btn" style="width:100%;margin-bottom:4px;" onclick="exportToOpenFOAM()">⬇ EXPORT CASE</button>
+    <div id="export-result" style="font-size:9px;color:rgba(255,255,255,0.35);line-height:1.4;margin-bottom:6px;max-width:100%;"></div>
+    <canvas id="bed-thumb" width="250" height="175" style="width:100%;height:auto;border:1px solid rgba(255,200,100,0.1);border-radius:3px;cursor:grab;"></canvas>
+    <div class="ctrl-row" style="justify-content:space-between;">
+      <span style="font-size:8px;color:rgba(255,255,255,0.2);">z-scale</span>
+      <span class="val" style="font-size:9px;" id="z-scale-val">0.28</span>
+    </div>
+    <input type="range" id="z-scale" min="5" max="60" value="28" step="1">
+
+    <div class="sect-label">coastal <button class="reset-btn" id="reset-coastal">reset</button></div>
+    <div class="ctrl-row" style="margin-bottom:2px;">
+      <label style="font-size:8px;color:rgba(255,255,255,0.3);">preset</label>
+      <select id="coastal-preset" style="flex:1;background:#161616;color:rgba(255,255,255,0.72);border:1px solid rgba(255,255,255,0.14);border-radius:2px;font-size:9px;padding:1px 2px;outline:none;">
+        <option value="custom">custom</option>
+        <option value="calm">calm summer</option>
+        <option value="storm">winter storm</option>
+        <option value="recovery">post-storm recovery</option>
+        <option value="slr">SLR 2100</option>
+      </select>
+    </div>
+    <div class="ctrl-row"><label>Hs <span class="val" id="c-hs-val">1.20</span> m</label><input type="range" id="c-hs" min="0.1" max="6" value="1.2" step="0.05"></div>
+    <div class="ctrl-row"><label>Tp <span class="val" id="c-tp-val">8.0</span> s</label><input type="range" id="c-tp" min="3" max="20" value="8" step="0.5"></div>
+    <div class="ctrl-row"><label>direction <span class="val" id="c-dir-val">0</span>&deg;</label><input type="range" id="c-dir" min="-80" max="80" value="0" step="1"></div>
+    <div class="ctrl-row"><label>spread <span class="val" id="c-spread-val">0</span>&deg;</label><input type="range" id="c-spread" min="0" max="45" value="0" step="1"></div>
+    <div class="ctrl-row"><label>water level <span class="val" id="c-wl-val">0.00</span> m</label><input type="range" id="c-wl" min="-0.5" max="3" value="0" step="0.05"></div>
+    <div class="ctrl-row"><label>SLR <span class="val" id="c-slr-val">0.00</span> m</label><input type="range" id="c-slr" min="0" max="2" value="0" step="0.05"></div>
+    <div class="ctrl-row"><label>D50 <span class="val" id="c-d50-val">0.30</span> mm</label><input type="range" id="c-d50" min="0.08" max="2" value="0.3" step="0.01"></div>
+    <div class="ctrl-row"><label>slope <span class="val" id="c-slope-val">0.020</span></label><input type="range" id="c-slope" min="0.005" max="0.15" value="0.02" step="0.005"></div>
+    <div id="coastal-readout" style="font-size:9px;color:rgba(110,190,255,0.6);line-height:1.5;margin:4px 0 3px 0;font-variant-numeric:tabular-nums;">
+      break <span id="ro-hb">–</span> m @ <span id="ro-db">–</span> m<br>
+      runup R2 <span id="ro-runup">–</span> m &nbsp; &xi; <span id="ro-xi">–</span><br>
+      <span id="ro-zone">–</span>
+    </div>
+
+    <div class="sect-label">morphology <button class="reset-btn" id="reset-morph">clear</button></div>
+    <div class="ctrl-row"><label>model rate <span class="val" id="mrate-val">2.0</span> d/s</label><input type="range" id="m-rate" min="0.1" max="30" value="2" step="0.1"></div>
+    <div class="ctrl-row"><label>response <span class="val" id="relax-val">40</span> d</label><input type="range" id="m-relax" min="5" max="180" value="40" step="5"></div>
+    <div class="ctrl-row"><label>longshore <span class="val" id="ls-val">0.03</span></label><input type="range" id="m-long" min="0" max="0.2" value="0.03" step="0.005"></div>
+    <div id="morph-readout" style="font-size:9px;color:rgba(255,190,120,0.6);line-height:1.5;margin:4px 0 3px 0;font-variant-numeric:tabular-nums;">
+      erosion <span id="ro-er">0.00</span> m &nbsp; accretion <span id="ro-ac">0.00</span> m<br>
+      storm <span id="ro-storm">0.00</span> &nbsp; bar at <span id="ro-bar">–</span> m<br>
+      Q peak <span id="ro-qpk">–</span> m&sup3;/s &nbsp; net <span id="ro-qnet">–</span> m&sup3;/s<br>
+      <span id="ro-ls">–</span>
+    </div>
+
+    <div class="sect-label">export <button class="reset-btn" id="export-xb">xbeach</button></div>
+    <div class="ctrl-row"><label>run <span class="val" id="xb-dur-val">6 h</span></label><input type="range" id="xb-dur" min="1" max="48" value="6" step="1"></div>
+    <div class="ctrl-row"><label>morfac <span class="val" id="xb-mf-val">10</span></label><input type="range" id="xb-mf" min="1" max="50" value="10" step="1"></div>
+    <div id="xb-status" style="font-size:9px;color:rgba(140,200,255,0.65);line-height:1.5;margin:3px 0 3px 0;">case not exported</div>
+
+    <div class="sect-label">physics <button class="reset-btn" id="reset-physics">reset</button></div>
+    <div class="ctrl-row"><label>inflow <span class="val" id="inflow-val">2.5</span></label><input type="range" id="inflow" min="0.5" max="5" value="2.5" step="0.1"></div>
+    <div class="ctrl-row"><label>settle thresh <span class="val" id="settle-thresh-val">0.20</span></label><input type="range" id="settle-thresh" min="0.05" max="0.8" value="0.20" step="0.01"></div>
+    <div class="ctrl-row"><label>settle prob <span class="val" id="settle-prob-val">0.012</span></label><input type="range" id="settle-prob" min="0.002" max="0.08" value="0.012" step="0.001"></div>
+    <div class="ctrl-row"><label>erode thresh <span class="val" id="erosion-thresh-val">1.00</span></label><input type="range" id="erosion-thresh" min="0.2" max="3.0" value="1.0" step="0.01"></div>
+    <div class="ctrl-row"><label>erode prob <span class="val" id="erosion-prob-val">0.02</span></label><input type="range" id="erosion-prob" min="0.005" max="0.1" value="0.02" step="0.005"></div>
+
+    <div class="sect-label">render <button class="reset-btn" id="reset-render">reset</button></div>
+    <div class="ctrl-row"><label>trail fade <span class="val" id="trail-fade-val">7</span></label><input type="range" id="trail-fade" min="2" max="40" value="7" step="1"></div>
+    <div class="ctrl-row"><label>size <span class="val" id="particle-size-val">2</span></label><input type="range" id="particle-size" min="1" max="8" value="2" step="0.5"></div>
+    <div class="ctrl-row2">
+      <label style="font-size:9px;color:rgba(255,255,255,0.4);">slow <input type="color" id="slow-color" value="#ff44aa"></label>
+      <label style="font-size:9px;color:rgba(255,255,255,0.4);">fast <input type="color" id="fast-color" value="#ddeeff"></label>
+    </div>
+    <div class="ctrl-row"><label>depo size <span class="val" id="depo-size-val">6</span></label><input type="range" id="depo-size" min="2" max="16" value="6" step="0.5"></div>
+    <div class="ctrl-row2">
+      <label style="font-size:9px;color:rgba(255,255,255,0.4);">recent <input type="color" id="depo-recent" value="#ffcc55"></label>
+      <label style="font-size:9px;color:rgba(255,255,255,0.4);">oldest <input type="color" id="depo-oldest" value="#6b4f3a"></label>
+    </div>
+    <div class="ctrl-row"><label>color thresh <span class="val" id="color-thresh-val">0.5</span></label><input type="range" id="color-thresh" min="0.1" max="1.5" value="0.5" step="0.05"></div>
+    <div class="ctrl-row"><label>flow scale <span class="val" id="flow-scale-val">25</span></label><input type="range" id="flow-scale" min="5" max="60" value="25" step="1"></div>
+    <div class="ctrl-row"><label>flow dens <span class="val" id="flow-dens-val">8</span></label><input type="range" id="flow-dens" min="3" max="20" value="8" step="1"></div>
+    <div class="ctrl-row"><label>flow opacity <span class="val" id="flow-opacity-val">140</span></label><input type="range" id="flow-opacity" min="20" max="255" value="140" step="5"></div>
+    <div class="ctrl-row"><label>particles <span class="val" id="particle-count-val">3000</span></label><input type="range" id="particle-count" min="500" max="8000" value="3000" step="100"></div>
+
+    <div class="sect-label">toggles</div>
+    <div class="ctrl-toggles">
+      <button id="toggle-grid" class="tg-off">grid</button>
+      <button id="toggle-flow" class="tg-off">flow</button>
+      <button id="toggle-bed" class="tg-off">bed</button>
+      <button id="toggle-pause" class="tg-off">pause</button>
+      <button id="toggle-elev" class="tg-off">elev</button>
+    </div>
+
+    <div class="sect-label">timeline <button id="toggle-timeline" class="reset-btn" style="font-size:7px;">off</button></div>
+    <div class="ctrl-row"><label>loop <span class="val" id="timeline-dur-val">20 yr</span></label><input type="range" id="timeline-dur" min="5" max="100" value="20" step="5"></div>
+    <div class="ctrl-row"><label>mode</label><button id="toggle-pingpong" class="reset-btn" style="font-size:8px;">loop</button></div>
+  </div>
+</div>
+
+<div id="timeline-bar"><canvas id="timeline-canvas"></canvas></div>
+
+<div id="help" style="position:fixed;bottom:8px;left:50%;transform:translateX(-50%);font-size:10px;color:rgba(255,255,255,0.2);pointer-events:none;z-index:5;text-align:center;">1 circle &middot; 2 rect &middot; 3 freeform &middot; 4 nourish &middot; click place &middot; drag move &middot; drag handle resize &middot; wheel rotate &middot; [ ] size &middot; backspace delete &middot; F flow &middot; G grid &middot; H help &middot; M bed &middot; space pause &middot; S save</div>
+
+<script>
+// ─────────────────────────────────────────────
+// CONFIGURATION
+// ─────────────────────────────────────────────
+const SIDEBAR_W = 270;
+const NX = 160;
+const NY = 90;
+const SIZE = (NX + 2) * (NY + 2);
+const IX = (i, j) => i + j * (NX + 2);
+
+const DT = 0.08;
+const VISC = 0.00005;
+const MIN_PARTICLE_AGE = 0.8;
+const MIN_TRAVEL_X = 100;
+const MAX_PARTICLE_AGE = 30;
+const GAUSS_SEIDEL_ITERS = 30;
+
+// Tunable simulation parameters
+let inflowVel = 2.5;
+let settleThresh = 0.20;
+let erosionThresh = 1.0;
+let settleProb = 0.012;
+let erosionProb = 0.02;
+
+// Deposition heightfield (aggradation): sediment accumulates as extra bed height
+// so the bed physically builds up instead of leaving only visual dots.
+const DEPO_CELL = 4;        // deposition grid cell size (px)
+const DEPO_MAX = 160;       // max accumulated deposit height (px)
+const DEPO_AMOUNT = 4.0;    // bed height added per deposited particle (px)
+let GW = 0, GH = 0, depoGrid = null, userBedGrid = null;
+let bedRenderAcc = 0;       // timer for periodic bed-surface re-render
+
+// ─────────────────────────────────────────────
+// GLOBAL STATE
+// ─────────────────────────────────────────────
+let u, v, uPrev, vPrev;
+let solid;
+let p, divArr;
+
+let obstacles = [];
+let selectedIdx = -1;
+
+let ghostType = 'rect';
+let ghostRotation = 0;
+let ghostSize = 40;
+let resizeDrag = null;      // { idx, handle } active handle resize
+let polyVertexDrag = null;  // { idx, vi } active polygon-vertex drag
+let polyPoints = [];        // in-progress freeform polygon vertices
+
+// Timeline: choreograph obstacle existence through a looping time range.
+let timelineEnabled = false;
+let timelineDuration = 20;    // loop length in MODEL YEARS (5..100)
+const DEFAULT_OBJ_DUR = 5;    // default lifetime of a newly placed object, model years
+let modelYears = 0;           // elapsed model time: the clock the timeline and morphology share
+let timelinePingPong = false; // false = loop forward, true = bounce back and forth
+let tlDrag = null;            // active timeline drag {mode, obstacleIdx, clipIdx, grabX, ...}
+let selectedClip = -1;        // clip index within obstacles[selectedIdx].clips, -1 = none
+
+let particles = [];
+let deposited = [];
+
+let depoBuffer;
+let bedSurface;
+let bedThumb;
+let trailBuffer;
+let gridLayer;
+
+let paused = true;
+let showFlow = false;
+let showGrid = false;
+let showHelp = true;
+let showElev = false;
+let simTime = 0;
+
+// Bed profile
+let bedMode = false;
+let bedPoints = [];
+let bedXSections = [];
+let activeXSection = -1;
+
+// Bed point editing state
+let editingLongPt = -1;
+let editingXSStation = null;
+
+// Thumbnail rotation state
+let thumbAngleX = 30;
+let thumbAngleY = 30;
+let thumbDragging = false;
+let thumbDragLast = { x: 0, y: 0 };
+
+// Particle rendering controls
+let trailFade = 7;
+let particleSize = 2;
+let slowColor = '#ff44aa';
+let fastColor = '#ddeeff';
+let flowScale = 25;
+let flowDensity = 8;
+let flowOpacity = 140;
+let colorThresh = 0.5;
+let particleCount = 3000;
+let depoSize = 6;
+let depoRecentColor = '#ffcc55';
+let depoOldestColor = '#6b4f3a';
+
+let cellW, cellH;
+let dragging = false;
+let dragOffX, dragOffY;
+
+// ─────────────────────────────────────────────
+// BED FUNCTIONS
+// ─────────────────────────────────────────────
+function getStationZ(station, y) {
+  let xsData = bedXSections.find(xs => xs.x === station.x);
+  if (!xsData || xsData.points.length < 2) return station.z;
+  let pts = xsData.points; // kept sorted (sorted on push; pop preserves order)
+  if (y <= pts[0].y) return station.z + pts[0].z;
+  if (y >= pts[pts.length - 1].y) return station.z + pts[pts.length - 1].z;
+  for (let k = 0; k < pts.length - 1; k++) {
+    if (pts[k].y <= y && y <= pts[k + 1].y) {
+      let t = (y - pts[k].y) / (pts[k + 1].y - pts[k].y);
+      return station.z + pts[k].z + t * (pts[k + 1].z - pts[k].z);
+    }
+  }
+  return station.z;
+}
+
+/**
+ * Default archetype beach profile, in bed units.
+ *
+ * Offshore shelf, rising shoreface, beach face crossing the waterline, berm, then dune.
+ * Sections are fractions of the canvas height (y=0 offshore, y=height landward).
+ * Replaced by the coastal-conditions panel once Phase 1 lands.
+ */
+function defaultCoastalBedZ(x, y) {
+  // Cross-shore runs along x: offshore at x=0 (left), dune at x=width (right).
+  // Waterline lands at 0.74 of the width, in the right third.
+  //
+  // Built FROM the equilibrium rather than hand-placed. Offshore is the Dean curve for the
+  // configured sediment; landward is the beach gradient the equilibrium itself uses; beyond
+  // the berm crest the dune rises at its own slope. Under calm the disequilibrium is zero,
+  // so the profile does not lurch toward a target it was never seeded at.
+  const xShore  = 0.74 * Math.max(width, 1);
+  const xMPerPx = REACH_CROSSSHORE / Math.max(width, 1);
+  const Y = (xShore - x) * xMPerPx;                 // metres offshore of the waterline
+  // Datum, NOT the live water level. Water rises over a fixed bed; if the profile followed
+  // conditions.waterLevel a surge would lift the seabed with it and erode nothing.
+  const wl = 0;
+  const A  = deanA(conditions.d50);
+
+  if (Y >= 0) {                                     // shoreface: Dean h = A y^(2/3)
+    return (wl - A * Math.pow(Y, 2 / 3)) / M_PER_BED_UNIT;
+  }
+
+  const run  = -Y;
+  const zBch = wl + BEACH_SLOPE * run;
+  if (zBch <= wl + BERM_TOP_M) {                    // beach face
+    return zBch / M_PER_BED_UNIT;
+  }
+  const runAtBerm = BERM_TOP_M / BEACH_SLOPE;       // dune: continues from the berm crest
+  return (wl + BERM_TOP_M + (run - runAtBerm) * DUNE_SLOPE) / M_PER_BED_UNIT;
+}
+
+function computeUserBedZ(x, y) {
+  if (bedPoints.length < 2) return defaultCoastalBedZ(x, y);
+  if (x <= bedPoints[0].x) return getStationZ(bedPoints[0], y);
+  if (x >= bedPoints[bedPoints.length - 1].x) return getStationZ(bedPoints[bedPoints.length - 1], y);
+  for (let k = 0; k < bedPoints.length - 1; k++) {
+    if (bedPoints[k].x <= x && x <= bedPoints[k + 1].x) {
+      let t = (x - bedPoints[k].x) / (bedPoints[k + 1].x - bedPoints[k].x);
+      return getStationZ(bedPoints[k], y) + t * (getStationZ(bedPoints[k + 1], y) - getStationZ(bedPoints[k], y));
+    }
+  }
+  return 0;
+}
+
+// Fast bilinear lookup of the cached user-drawn bed height (same grid as depoGrid).
+function userBedZ(x, y) {
+  if (!userBedGrid || bedPoints.length < 2) return defaultCoastalBedZ(x, y);
+  let fx = x / DEPO_CELL - 0.5, fy = y / DEPO_CELL - 0.5;
+  let i = Math.floor(fx), j = Math.floor(fy);
+  if (i < 0 || j < 0 || i >= GW - 1 || j >= GH - 1) return 0;
+  let tx = fx - i, ty = fy - j;
+  let a = userBedGrid[j * GW + i], b = userBedGrid[j * GW + i + 1];
+  let c = userBedGrid[(j + 1) * GW + i], d = userBedGrid[(j + 1) * GW + i + 1];
+  return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+}
+
+// Rebuild the cached bed grid from the exact (slow) interpolation.
+// Called on bed edits and before each bed-surface re-render (~GW*GH samples).
+function rebuildUserBedGrid() {
+  if (!userBedGrid) return;
+  for (let j = 0; j < GH; j++) {
+    let y = (j + 0.5) * DEPO_CELL;
+    for (let i = 0; i < GW; i++) {
+      userBedGrid[j * GW + i] = computeUserBedZ((i + 0.5) * DEPO_CELL, y);
+    }
+  }
+}
+
+// Combined bed height = user-drawn bed + accumulated deposition (aggradation).
+function bedZ(x, y) { return userBedZ(x, y) + depoZ(x, y) + morphZ(x, y) + longZ(x, y); }
+
+// The bed without the morphology layer. The equilibrium profile is referenced to the
+// waterline of THIS surface, not the evolving one: a Dean profile anchored at its own
+// moving shoreline is degenerate, so re-anchoring each step makes the target chase the
+// bed and diverge.
+function bedZ0(x, y) { return userBedZ(x, y) + depoZ(x, y); }
+
+function depoZ(x, y) {
+  if (!depoGrid) return 0;
+  let fx = x / DEPO_CELL - 0.5, fy = y / DEPO_CELL - 0.5;
+  let i = Math.floor(fx), j = Math.floor(fy);
+  if (i < 0 || j < 0 || i >= GW - 1 || j >= GH - 1) return 0;
+  let tx = fx - i, ty = fy - j;
+  let a = depoGrid[j * GW + i], b = depoGrid[j * GW + i + 1];
+  let c = depoGrid[(j + 1) * GW + i], d = depoGrid[(j + 1) * GW + i + 1];
+  return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+}
+
+// Signed morphology change, same grid as depoGrid. Separated from depoGrid because
+// deposition is clamped to [0, DEPO_MAX] and cannot represent erosion.
+function morphZ(x, y) {
+  if (!morphGrid) return 0;
+  let fx = x / DEPO_CELL - 0.5, fy = y / DEPO_CELL - 0.5;
+  let i = Math.floor(fx), j = Math.floor(fy);
+  if (i < 0 || j < 0 || i >= GW - 1 || j >= GH - 1) return 0;
+  let tx = fx - i, ty = fy - j;
+  let a = morphGrid[j * GW + i],     b = morphGrid[j * GW + i + 1];
+  let c = morphGrid[(j + 1) * GW + i], d = morphGrid[(j + 1) * GW + i + 1];
+  return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+}
+
+// Alongshore transport layer. Separate from morphGrid so the cross-shore relaxation
+// cannot erode accretion that longshore transport deposited.
+function longZ(x, y) {
+  if (!longGrid) return 0;
+  let fx = x / DEPO_CELL - 0.5, fy = y / DEPO_CELL - 0.5;
+  let i = Math.floor(fx), j = Math.floor(fy);
+  if (i < 0 || j < 0 || i >= GW - 1 || j >= GH - 1) return 0;
+  let tx = fx - i, ty = fy - j;
+  let a = longGrid[j * GW + i],       b = longGrid[j * GW + i + 1];
+  let c = longGrid[(j + 1) * GW + i], d = longGrid[(j + 1) * GW + i + 1];
+  return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+}
+
+function addDeposit(x, y, amt) {
+  if (!depoGrid) return;
+  let i = Math.floor(x / DEPO_CELL), j = Math.floor(y / DEPO_CELL);
+  for (let dj = -1; dj <= 1; dj++) {
+    for (let di = -1; di <= 1; di++) {
+      let ii = i + di, jj = j + dj;
+      if (ii < 0 || ii >= GW || jj < 0 || jj >= GH) continue;
+      let w = (di === 0 && dj === 0) ? 0.5 : 0.0625;
+      let idx = jj * GW + ii;
+      depoGrid[idx] = Math.max(0, Math.min(DEPO_MAX, depoGrid[idx] + amt * w));
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
+// COASTAL WAVE FIELD
+// ─────────────────────────────────────────────
+// Column-by-column marching transformation, shoreward:
+//   refraction by Snell (alongshore wavenumber conserved)
+//   shoaling by energy-flux conservation on the oblique flux Cg*cos(theta)
+//   breaking dissipation after Battjes & Janssen (1978)
+//   runup after Stockdon et al. (2006)
+//
+// Diffraction is NOT modelled: a structure casts a hard shadow, not a spreading one.
+// Infragravity is excluded by design (PLAN.md, scope boundary).
+
+const GRAV = 9.81;
+const RHO  = 1025;              // kg/m3, seawater
+const VEL_GAIN = 120;           // visual gain: orbital m/s -> pixels/frame a viewer can read
+
+const REACH_ALONGSHORE = 400;   // m, x
+const REACH_CROSSSHORE = 600;   // m, x (offshore at x=0, dune landward)
+const M_PER_BED_UNIT   = 0.05;  // metres of elevation per bed unit
+
+// Morphology profile constants. BEACH_SLOPE is the subaerial beach gradient the equilibrium
+// is built from — distinct from conditions.slope, which is the foreshore gradient feeding
+// the runup formula. DUNE_SLOPE governs the dune beyond the berm crest.
+const BEACH_SLOPE    = 0.10;
+const DUNE_SLOPE     = 0.05;
+const BERM_TOP_M     = 1.5;   // metres above still water: top of the active beach
+
+// Cross-shore transport coefficient at the reference wave height, m2/s. Sets how fast the
+// profile redistributes; scaled by (Hs/1.5)^2 in morphologyStep so storms move sand faster.
+const TRANSPORT_D0   = 0.35;
+const TRANSPORT_HREF = 1.5;
+// Undertow strength: peak offshore flux per unit storm energy, m^2 per day.
+const UNDERTOW_Q       = 12.0;
+
+let conditions = {
+  Hs: 1.20,          // m, offshore significant wave height
+  Tp: 8.0,           // s, peak period
+  dirDeg: 0,         // deg from shore-normal, +ve to the right
+  spreadDeg: 0,      // deg, 0 = monochromatic
+  waterLevel: 0.0,   // m above datum (tide + SLR)
+  d50: 0.30,         // mm, not yet used by the wave field (Phase 2)
+  slope: 0.020,      // foreshore gradient, used by runup
+};
+let breakerGamma = 0.78;
+
+let waveComponents = [];
+let waveHComp      = [];
+let waveH          = new Float32Array(SIZE);
+let waveDepth      = new Float32Array(SIZE);
+let waveBreaking   = new Uint8Array(SIZE);
+let waveAngle      = new Float32Array(SIZE);   // breaking angle from shore-normal, rad
+
+let runupR2 = 0, runupSetup = 0, runupSwash = 0, iribarren = 0;
+let breakHb = 0, breakDepth = 0, breakCount = 0;
+
+/** Newton solution of the linear dispersion relation w^2 = g k tanh(k h). */
+function wavenumberK(T, h, kHint) {
+  const w2 = Math.pow(2 * Math.PI / T, 2);
+  // Seed from the neighbouring cell when one is available: adjacent depths are close, so
+  // this converges in two or three iterations instead of marching from the deep-water guess.
+  let k = (kHint && isFinite(kHint) && kHint > 0) ? kHint : w2 / GRAV;
+  for (let it = 0; it < 12; it++) {
+    const th = Math.tanh(k * h);
+    const f  = GRAV * k * th - w2;
+    const df = GRAV * (th + k * h * (1 - th * th));
+    if (Math.abs(df) < 1e-12) break;
+    const kn = k - f / df;
+    if (!isFinite(kn) || kn <= 0) break;
+    if (Math.abs(kn - k) < 1e-9) { k = kn; break; }
+    k = kn;
+  }
+  return k;
+}
+
+/** Group velocity Cg = n*C from linear theory. */
+function groupVelocity(T, h, kKnown) {
+  const hh = Math.max(h, 0.05);
+  // The caller has usually just solved for k at this same depth. Re-solving it here doubled
+  // the dispersion cost of every cell in the march.
+  const k  = (kKnown && isFinite(kKnown) && kKnown > 0) ? kKnown : wavenumberK(T, hh);
+  const kh = k * hh;
+  const c  = (2 * Math.PI / T) / k;
+  const n  = 0.5 * (1 + (2 * kh) / Math.max(Math.sinh(2 * kh), 1e-9));
+  return n * c;
+}
+
+/** Bed elevation in metres (bed units are not metres). */
+function bedMeters(x, y) { return bedZ(x, y) * M_PER_BED_UNIT; }
+
+/** Still-water depth in metres at grid cell (i, j). Negative means dry land. */
+function depthAt(i, j) { return conditions.waterLevel - bedMeters(i * cellW, j * cellH); }
+
+/**
+ * Expand the conditions into wave components.
+ * Monochromatic when spreadDeg is ~0; otherwise 7 wrapped-Gaussian directional bins.
+ * Weights sum to 1 so that sum(w*H^2) recovers the total offshore energy.
+ */
+function buildComponents() {
+  if (conditions.spreadDeg <= 0.5) {
+    return [{ Hs: conditions.Hs, Tp: conditions.Tp, dirDeg: conditions.dirDeg, weight: 1 }];
+  }
+  const n = 7;
+  const sigma = conditions.spreadDeg * Math.PI / 180;
+  const out = [];
+  let wsum = 0;
+  for (let i = 0; i < n; i++) {
+    const t = (i - (n - 1) / 2) / ((n - 1) / 2);            // -1 .. 1
+    const offset = t * 1.5 * sigma;                          // +/- 1.5 sigma
+    const w = Math.exp(-0.5 * Math.pow(t * 1.5, 2));         // Gaussian in bin space
+    out.push({
+      Hs: conditions.Hs, Tp: conditions.Tp,
+      dirDeg: conditions.dirDeg + offset * 180 / Math.PI,
+      weight: w,
+    });
+    wsum += w;
+  }
+  for (const c of out) c.weight /= wsum;
+  return out;
+}
+
+/**
+ * March one component shoreward down every column.
+ * State carried from cell to cell: H, theta, k, Cg.
+ */
+function transformComponent(ci, comp) {
+  const T = comp.Tp;
+  const out = waveHComp[ci];
+  out.fill(0);
+
+  // Cross-shore step length in metres (marching is +x, from offshore to dune).
+  const dxm = cellW * (REACH_CROSSSHORE / Math.max(width, 1));
+  const sin0 = Math.max(-0.999, Math.min(0.999,
+                 Math.sin(comp.dirDeg * Math.PI / 180)));
+
+  for (let j = 1; j <= NY; j++) {          // one march per alongshore row
+    let hPrev  = Math.max(depthAt(1, j), 0.05);
+    let kPrev  = wavenumberK(T, hPrev);
+    let CgPrev = groupVelocity(T, hPrev);
+    let thPrev = Math.asin(sin0);
+    let Hprev  = comp.Hs;
+
+    for (let i = 1; i <= NX; i++) {        // shoreward march
+      const idx = IX(i, j);
+      const h = depthAt(i, j);
+
+      if (h <= 0.05 || solid[idx]) { out[idx] = 0; continue; }
+
+      const k  = wavenumberK(T, h, kPrev);
+      const Cg = groupVelocity(T, h, k);
+
+      // refraction: alongshore (y) wavenumber k*sin(theta) conserved
+      let sinT = Math.sin(thPrev) * (kPrev / k);
+      sinT = Math.max(-0.999, Math.min(0.999, sinT));
+      const th = Math.asin(sinT);
+
+      const fluxPrev = Math.max(CgPrev * Math.cos(thPrev), 1e-6);
+      const flux     = Math.max(Cg * Math.cos(th), 1e-6);
+      let H = Hprev * Math.sqrt(fluxPrev / flux);
+
+      const Hmax = breakerGamma * h;
+      const Hrms = H / Math.SQRT2;
+      if (Hrms > 1e-6) {
+        const Qb = Math.exp(-Math.pow(Hmax / Hrms, 2));
+        const D  = 0.25 * RHO * GRAV * (1 / T) * Qb * Hmax * Hmax;
+        if (D > 0) {
+          const E  = 0.125 * RHO * GRAV * H * H;
+          const dE = D * dxm / flux;
+          H = Math.sqrt(8 * Math.max(E - dE, 0) / (RHO * GRAV));
+        }
+      }
+      if (H > Hmax) H = Hmax;
+
+      out[idx] = H;
+      if (ci === 0) waveAngle[idx] = th;      // dominant component drives longshore transport
+      Hprev = H; thPrev = th; kPrev = k; CgPrev = Cg;
+    }
+  }
+}
+
+/** Energy-combine the component fields into waveH. */
+function combineComponents() {
+  const n = waveComponents.length;
+  const acc = new Float32Array(SIZE);
+  let wsum = 0;
+  for (let c = 0; c < n; c++) {
+    const arr = waveHComp[c], w = waveComponents[c].weight;
+    for (let idx = 0; idx < SIZE; idx++) acc[idx] += w * arr[idx] * arr[idx];
+    wsum += w;
+  }
+  const inv = wsum > 0 ? 1 / wsum : 1;
+  for (let idx = 0; idx < SIZE; idx++) waveH[idx] = Math.sqrt(acc[idx] * inv);
+}
+
+/** Orbital velocity, depth field and the breaking mask. */
+function applyField() {
+  const T = conditions.Tp;
+  const ang = conditions.dirDeg * Math.PI / 180;
+  const osc = Math.sin(simTime * (2 * Math.PI / T));
+  const dtF = 1 / 60;                                   // assumed frame time
+  const cWm = Math.max(cellW * (REACH_CROSSSHORE / Math.max(width, 1)), 1e-3);
+  const cHm = Math.max(cellH * (REACH_ALONGSHORE / Math.max(height, 1)), 1e-3);
+  breakCount = 0;
+
+  for (let j = 1; j <= NY; j++) {
+    for (let i = 1; i <= NX; i++) {
+      const idx = IX(i, j);
+      const h = depthAt(i, j);
+      waveDepth[idx] = h;
+
+      if (h <= 0.05 || solid[idx] || waveH[idx] <= 1e-4) {
+        u[idx] = 0; v[idx] = 0; waveBreaking[idx] = 0; continue;
+      }
+
+      const k  = wavenumberK(T, h);
+      const sh = Math.max(Math.sinh(k * h), 1e-6);
+      const amp = (waveH[idx] / 2) * ((2 * Math.PI / T) / sh);   // m/s near the bed
+
+      // getVelocityAt() expects CELLS PER FRAME: it multiplies by cellW/cellH to get px.
+      // Shore-normal is +x, so the alongshore component is sin(ang).
+      // The +0.25 offset gives the oscillation a net onshore bias — a stand-in for Stokes
+      // drift. Without it the particles slosh in place and the water reads as static.
+      u[idx] = (amp * Math.cos(ang) * (osc + 0.6) * VEL_GAIN * dtF) / cWm;
+      v[idx] = (amp * Math.sin(ang) * (osc + 0.6) * VEL_GAIN * dtF) / cHm;
+
+      const Hb = breakerGamma * h;
+      if (waveH[idx] >= Hb * 0.97) {
+        waveBreaking[idx] = 1;
+        breakCount++;
+        if (waveH[idx] > breakHb) { breakHb = waveH[idx]; breakDepth = h; }
+      } else {
+        waveBreaking[idx] = 0;
+      }
+    }
+  }
+}
+
+/**
+ * Stockdon et al. (2006) eq. 18, R2 (2% exceedance runup) on a plane foreshore:
+ *   R2 = 1.1 * ( 0.35*beta*sqrt(H0*L0) + 0.5*sqrt(H0*L0*(0.563*beta^2 + 0.004)) )
+ * L0 is the deep-water wavelength g*T^2/(2*pi).
+ */
+function computeRunup() {
+  const T = conditions.Tp, H0 = conditions.Hs, b = conditions.slope;
+  const L0 = GRAV * T * T / (2 * Math.PI);
+  const root = Math.sqrt(Math.max(H0 * L0, 0));
+  runupSetup = 0.35 * b * root;
+  runupSwash = 0.5 * Math.sqrt(Math.max(H0 * L0 * (0.563 * b * b + 0.004), 0));
+  runupR2    = 1.1 * (runupSetup + runupSwash);
+  iribarren  = b / Math.sqrt(Math.max(H0 / L0, 1e-9));
+}
+
+function waveFieldStep() {
+  buildSolidMask();
+
+  waveComponents = buildComponents();
+  if (waveHComp.length !== waveComponents.length) {
+    waveHComp = waveComponents.map(() => new Float32Array(SIZE));
+  }
+
+  breakHb = 0; breakDepth = 0;
+
+  for (let c = 0; c < waveComponents.length; c++) transformComponent(c, waveComponents[c]);
+
+  combineComponents();
+  applyField();
+  computeRunup();
+}
+
+// ─────────────────────────────────────────────
+// CROSS-SHORE RESPONSE  (Phase 2)
+// ─────────────────────────────────────────────
+// Exner continuity with a relaxed equilibrium profile:
+//
+//   dz/dt = (z_eq - z) / T
+//
+// z_eq is the Dean profile h = A*y^(2/3) offshore, continued at the foreshore gradient
+// on land. A comes from the settling velocity of the bed material (Soulsby 1997), so
+// grain size controls the profile shape.
+//
+// Under wave energy z_eq is modified: the subaerial foreshore flattens (erosion of the
+// upper profile) and a bar appears at the breakpoint (deposition where the waves break).
+// Both are driven by the same storm intensity, so the two responses stay coupled.
+//
+// Limitation, stated plainly: relaxation is a target-seeking model, not a flux-conserving
+// one. It does not conserve volume exactly. Volume conservation belongs with nourishment
+// and alongshore transport in Phase 3.
+
+const POROSITY = 0.40;
+
+let morphGrid = null;
+let modelDaysPerSec = 2.0;     // model days per real second
+let relaxDays = 40;            // e-folding time of the profile response, model days
+let morphEnabled = true;
+let lastMaxErosion = 0, lastMaxAccretion = 0, barDistanceM = 60, stormNow = 0;
+let shoreRef = null, refWaterLevel = 0;   // per alongshore row (GH)
+
+/**
+ * Fixed waterline reference per column, from the bed WITHOUT the morphology layer.
+ *
+ * Anchored once and held. Two failure modes are avoided by NOT re-deriving it:
+ *  - re-anchoring to the evolving shoreline each step makes the target chase the bed,
+ *    which diverges;
+ *  - re-anchoring on every water-level change cancels the storm signal, because a surge
+ *    lifts the waterline and raises the landward target by exactly what the storm lowers.
+ *
+ * Consequence, stated plainly: the equilibrium profile does not translate inland under
+ * sea-level rise. Shoreline retreat under SLR needs a volume-conserving profile solver
+ * and belongs to Phase 3 alongside alongshore transport.
+ */
+function shoreRefAt(gy) {
+  if (!shoreRef) {
+    shoreRef = new Float32Array(GH);
+    refWaterLevel = conditions.waterLevel;
+    for (let j = 0; j < GH; j++) {
+      const s = shorelineXPx(j, true);
+      shoreRef[j] = s === null ? -1 : s;
+    }
+  }
+  return shoreRef[gy] >= 0 ? shoreRef[gy] : null;
+}
+
+/** Soulsby (1997) settling velocity for a quartz grain, m/s. */
+function settlingVelocity(d50mm) {
+  const d = Math.max(d50mm, 0.05) / 1000;
+  const nu = 1.36e-6;                                   // kinematic viscosity, m2/s
+  const Dstar = d * Math.pow(GRAV * 1.65 / (nu * nu), 1 / 3);
+  return (nu / d) * (Math.sqrt(10.36 * 10.36 + 1.049 * Math.pow(Dstar, 3)) - 10.36);
+}
+
+/** Dean profile coefficient A in m^(1/3), from grain size. */
+function equilibriumZ(Y, A) {
+  // The FAIR-WEATHER equilibrium only. Storms no longer bend this profile: they move sediment
+  // through the undertow term in morphologyStep, and the bar is what that transport leaves
+  // behind. Keeping the bar here made it a target the diffusion dutifully filled whether or
+  // not anything had eroded, which is why one calibration could not serve two wave heights.
+  //
+  // Referenced to the water level at anchor time, NOT the live one. A surge would otherwise
+  // lift the landward target by exactly the amount the storm lowers it.
+  const wl = refWaterLevel;
+  if (Y >= 0) {
+    // cbrt(Y*Y) rather than pow(Y, 2/3): this runs once per cell per frame and Math.pow with a
+    // fractional exponent goes through exp/log. Same value, cheaper.
+    return wl - A * Math.cbrt(Y * Y);
+  }
+  // Landward: the beach gradient this profile is built from. conditions.slope is NOT used
+  // here -- that is the runup foreshore gradient, a different quantity.
+  return wl + BEACH_SLOPE * (-Y);
+}
+
+function deanA(d50mm) {
+  const ws = Math.max(settlingVelocity(d50mm) * 100, 0.1);   // cm/s
+  return 0.067 * Math.pow(ws, 0.44);
+}
+
+/** Storm intensity 0..1 from wave height and water level. */
+function stormIntensity() {
+  const byWave  = (conditions.Hs - 1.5) / 2.5;
+  const byLevel = (conditions.waterLevel - 0.3) / 1.2;
+  const a = Math.max(0, Math.min(1, byWave))   * 0.6;
+  const b = Math.max(0, Math.min(1, byLevel)) * 0.4;
+  return a + b;
+}
+
+/** Waterline position in pixels for a morph-grid column, or null. */
+/** Waterline position in pixels along x for a morph-grid row, or null. */
+function shorelineXPx(gj, base) {
+  const y = (gj + 0.5) * DEPO_CELL;
+  const wlU = conditions.waterLevel / M_PER_BED_UNIT;
+  const fz = base ? bedZ0 : bedZ;
+  let xPrev = 0, zPrev = fz(0, y);
+  for (let x = DEPO_CELL; x <= width; x += DEPO_CELL) {
+    const z = fz(x, y);
+    if (zPrev < wlU && z >= wlU) {
+      const t = (wlU - zPrev) / ((z - zPrev) || 1e-6);
+      return xPrev + t * DEPO_CELL;
+    }
+    xPrev = x; zPrev = z;
+  }
+  return null;
+}
+
+/**
+ * Equilibrium bed elevation in metres.
+ * Y is metres offshore of the waterline: positive seaward, negative landward.
+ */
+
+/** Mean distance from the waterline to the outermost breaking cell, in metres. */
+function computeBarDistance() {
+  const dxp = REACH_CROSSSHORE / Math.max(width, 1);
+  let sum = 0, n = 0;
+  for (let j = 1; j <= NY; j += 4) {          // one alongshore row in four
+    let iBreak = -1, iShore = -1;
+    for (let i = 1; i <= NX; i++) {
+      const idx = IX(i, j);
+      if (iBreak < 0 && waveBreaking[idx]) iBreak = i;
+      if (iShore < 0 && depthAt(i, j) <= 0.05) { iShore = i; break; }
+    }
+    if (iBreak > 0 && iShore > iBreak) { sum += (iShore - iBreak) * cellW * dxp; n++; }
+  }
+  barDistanceM = n > 0 ? sum / n : 60;
+}
+
+/** One morphology step over dtModel seconds of model time. */
+let _morphScratch = null;
+
+function morphologyStep(dtModel) {
+  if (!morphGrid || !morphEnabled || dtModel <= 0) return;
+
+  stormNow = stormIntensity();
+  const A = deanA(conditions.d50);
+  const xMPerPx = REACH_CROSSSHORE / Math.max(width, 1);
+  const dx = DEPO_CELL * xMPerPx;                    // metres per morph cell
+  const POR = 0.4;
+
+  // Transport scales with wave energy. This is what lets one constant serve both a storm
+  // that erodes in hours and a recovery that takes weeks.
+  const energy = Math.pow(Math.max(conditions.Hs, 0.1) / TRANSPORT_HREF, 2);
+  const D = TRANSPORT_D0 * energy;
+  const r = (D / (1 - POR)) * dtModel / (dx * dx);
+
+  let maxEr = 0, maxAc = 0;
+
+  // Reused across frames: allocating seven typed arrays per frame was pure GC pressure.
+  if (!_morphScratch || _morphScratch.length !== GW) {
+    _morphScratch = {
+      u: new Float64Array(GW), un: new Float64Array(GW), diag: new Float64Array(GW),
+      low: new Float64Array(GW), up: new Float64Array(GW), rhs: new Float64Array(GW),
+      act: new Uint8Array(GW), stormDz: new Float64Array(GW),
+      faceF: new Float64Array(GW + 1),
+    };
+  }
+  const { u, un, diag, low, up, rhs, act, stormDz, faceF } = _morphScratch;
+
+  for (let gy = 0; gy < GH; gy++) {
+    const xShore = shoreRefAt(gy);
+    if (xShore === null) continue;
+    const y = (gy + 0.5) * DEPO_CELL;
+
+    // ---- undertow transport for this row
+    if (stormNow > 0) {
+      // Surge divided by beach slope: how far the waterline actually runs up the beach.
+      const surge = conditions.waterLevel - refWaterLevel;
+      const Y0 = -Math.max(surge / BEACH_SLOPE, 0.5);
+      const Yb = Math.max(barDistanceM, 20);          // breakpoint
+      // The flux approaches its peak quickly near the storm waterline, so erosion is
+      // concentrated in the upper shoreface where the scarp actually forms, rather than spread
+      // evenly across the whole surf zone. Spreading it evenly moved ten times too much sand
+      // and built a 7 m bar.
+      const Lrise = Math.max(0.25 * (Yb - Y0), 12);
+      // Seaward of the break the load splits. Part settles at once just outside the break and
+      // builds the bar; the rest is carried into deeper water. Putting ALL of it in the bar is
+      // what made the bar twice as tall as XBeach's -- the eroded volume is right, the share
+      // that ends up in the crest is not.
+      const wBar = Math.max(0.12 * Yb, 10);     // sharp component: the bar itself
+      const wDep = Math.max(2.2 * Yb, 200);     // broad component: lower shoreface
+      const fBar = 0.35;                         // share of the load that stays in the bar
+      const q0 = UNDERTOW_Q * stormNow * conditions.Hs * conditions.Hs;
+      const maxDrop = Math.max(0.68 * stormNow * conditions.Hs, 0.05);
+
+      for (let f = 0; f <= GW; f++) {
+        const Yf = (xShore - f * DEPO_CELL) * xMPerPx;
+        if (Yf <= Y0) faceF[f] = 0;
+        else if (Yf <= Yb) faceF[f] = q0 * (1 - Math.exp(-(Yf - Y0) / Lrise));
+        else {
+          const d = Yf - Yb;
+          faceF[f] = q0 * (fBar * Math.exp(-d / wBar) + (1 - fBar) * Math.exp(-d / wDep));
+        }
+      }
+      faceF[0] = 0;
+      faceF[GW] = 0;
+
+      let sumE = 0, sumD = 0;
+      for (let gx = 0; gx < GW; gx++) {
+        const Yc = (xShore - (gx + 0.5) * DEPO_CELL) * xMPerPx;
+        // x runs OFFSHORE -> LANDWARD on this grid, so dY/dx = -1 and the divergence in the
+        // offshore coordinate is dz/dt = -dF/dY = +dF/dx. With the sign the wrong way round
+        // every cell accreted uniformly instead of eroding the surf zone.
+        let dz = (faceF[gx + 1] - faceF[gx]) / dx;
+        if (dz < 0) {
+          // Erosion only while the bed is still above the storm floor, so a long storm lands
+          // on an equilibrium rather than digging a trench. The cap is applied to the STEP,
+          // not the rate: dz is metres per day and a single call can advance many days, which
+          // is how one step used to dig 15 m and hit the grid clamp.
+          const below = equilibriumZ(Yc, A) - bedZ((gx + 0.5) * DEPO_CELL, y) * M_PER_BED_UNIT;
+          const allow = Math.max(0, maxDrop - below);
+          const stepDrop = Math.min(-dz * dtModel, allow);
+          dz = -stepDrop / dtModel;
+          sumE += dz;
+        } else {
+          sumD += dz;
+        }
+        stormDz[gx] = dz;
+      }
+      // Only deposit what was lifted.
+      if (sumD > 0 && sumE < 0) {
+        const k = -sumE / sumD;
+        for (let gx = 0; gx < GW; gx++) if (stormDz[gx] > 0) stormDz[gx] *= k;
+      } else if (sumE === 0) {
+        for (let gx = 0; gx < GW; gx++) if (stormDz[gx] > 0) stormDz[gx] = 0;
+      }
+
+      if (globalThis.DBG_UNDERTOW && gy === (GH >> 1)) {
+        const probe = [-20, -8, 0, 30, 60, 100, 130, 159, 190, 240, 320];
+        const parts = probe.map(Yt => {
+          const gx = Math.round((xShore - Yt / xMPerPx) / DEPO_CELL);
+          if (gx < 0 || gx >= GW) return `${Yt}:OOB`;
+          return `${Yt}:${stormDz[gx].toFixed(3)}`;
+        });
+        console.log(`  DBG undertow Y0=${Y0.toFixed(1)} Yb=${Yb.toFixed(1)} q0=${q0.toFixed(1)} maxDrop=${maxDrop.toFixed(2)} sumE=${sumE.toFixed(2)} sumD=${sumD.toFixed(2)}`);
+        console.log(`      dz by Y(m): ${parts.join(' ')}`);
+        {
+          const gxT = Math.round((xShore - 60 / xMPerPx) / DEPO_CELL);
+          const YcT = (xShore - (gxT + 0.5) * DEPO_CELL) * xMPerPx;
+          const zeqT = equilibriumZ(YcT, A);
+          const zbT = bedZ((gxT + 0.5) * DEPO_CELL, y) * M_PER_BED_UNIT;
+          console.log(`      cellcheck gx=${gxT} Yc=${YcT.toFixed(2)} zeq=${zeqT} zbed=${zbT} A=${A} refWL=${refWaterLevel} y=${y}`);
+        }
+      }
+    } else {
+      for (let gx = 0; gx < GW; gx++) stormDz[gx] = 0;
+    }
+
+    let any = false;
+    for (let gx = 0; gx < GW; gx++) {
+      const x = (gx + 0.5) * DEPO_CELL;
+      const z = bedZ(x, y) * M_PER_BED_UNIT;
+      // The dune is not a Dean profile: exclude it from transport entirely.
+      if (z > refWaterLevel + BERM_TOP_M) { act[gx] = 0; u[gx] = 0; continue; }
+      const Y = (xShore - x) * xMPerPx;
+      u[gx] = z - equilibriumZ(Y, A);
+      act[gx] = 1;
+      any = true;
+    }
+    if (!any) continue;
+
+    // Implicit tridiagonal: (I - r*L) u_new = u, zero-flux at both ends.
+    for (let gx = 0; gx < GW; gx++) {
+      const linkL = gx > 0      && act[gx] && act[gx - 1];
+      const linkR = gx < GW - 1 && act[gx] && act[gx + 1];
+      const rr = (linkL || linkR) ? r : 0;
+      // A boundary cell couples to one neighbour against itself (ghost cell = itself),
+      // which is a zero-flux condition rather than a fixed value.
+      const nb = (linkL ? 1 : 0) + (linkR ? 1 : 0);
+      low[gx]  = linkL ? -rr : 0;
+      up[gx]   = linkR ? -rr : 0;
+      diag[gx] = 1 + rr * Math.max(nb, 0);
+      rhs[gx]  = u[gx];
+    }
+
+    // Thomas algorithm.
+    for (let gx = 1; gx < GW; gx++) {
+      const f = low[gx] / diag[gx - 1];
+      diag[gx] -= f * up[gx - 1];
+      rhs[gx]  -= f * rhs[gx - 1];
+    }
+    un[GW - 1] = rhs[GW - 1] / diag[GW - 1];
+    for (let gx = GW - 2; gx >= 0; gx--) {
+      un[gx] = (rhs[gx] - up[gx] * un[gx + 1]) / diag[gx];
+    }
+
+    for (let gx = 0; gx < GW; gx++) {
+      if (!act[gx]) continue;
+      let du = un[gx] - u[gx];                        // metres, fair-weather relaxation
+      if (!isFinite(du)) continue;
+      // dtModel is in days, the transport is in metres per day.
+      du += stormDz[gx] * dtModel;
+      const idx = gy * GW + gx;
+      morphGrid[idx] += du / M_PER_BED_UNIT;
+      if (morphGrid[idx] >  300) morphGrid[idx] =  300;
+      if (morphGrid[idx] < -300) morphGrid[idx] = -300;
+      if (du < 0 && -du > maxEr) maxEr = -du;
+      if (du > 0 &&  du > maxAc) maxAc =  du;
+    }
+  }
+
+  lastMaxErosion = maxEr;
+  lastMaxAccretion = maxAc;
+}
+
+/** Flood / drain the morphology grid with spring sand, for the reset control. */
+function resetMorphology() {
+  if (!morphGrid) return;
+  morphGrid.fill(0);
+  if (longGrid) longGrid.fill(0);
+  shoreRef = null;
+  updateBedBuffer();
+}
+
+// ─────────────────────────────────────────────
+// LONGSHORE TRANSPORT  (Phase 3)
+// ─────────────────────────────────────────────
+// CERC bulk formula, applied per alongshore row at the break point:
+//
+//   Q = K / (16 (s-1)) * Hb^2.5 / sqrt(gamma) * sin(2 alpha_b)      [m3/s]
+//
+// sin(2a) makes transport zero at shore-normal and peak at 45 degrees, by construction.
+// The bed then follows the divergence: dz/dt = -(1/(1-p)) * (dQ/dy) / W_active.
+//
+// Structures block transport because they occupy the surf zone: buildSolidMask zeroes the
+// wave field inside them, so no cell in that row is breaking, so Q is zero there. The
+// resulting gradient IS the groyne effect — accretion updrift, erosion downdrift.
+
+const CERC_K = 0.39;         // CERC coefficient for significant wave height
+const CERC_S = 2.65;         // relative sediment density
+const POROSITY_LS = 0.40;
+
+let longGrid = null;
+let longshoreGain = 0.03;    // morphological rate multiplier for the alongshore term
+let qLong = new Float32Array(NY + 2);
+let qPeak = 0, qMean = 0;    // m3/s
+
+/** CERC longshore transport rate, m3/s. alpha is the breaking angle in radians. */
+function cercQ(Hb, alpha) {
+  if (Hb <= 0.02 || !isFinite(alpha)) return 0;
+  return (CERC_K / (16 * (CERC_S - 1))) *
+         (Math.pow(Hb, 2.5) / Math.sqrt(breakerGamma)) *
+         Math.sin(2 * alpha);
+}
+
+/** Transport rate per alongshore row, taken at the outermost breaking cell. */
+function computeLongshore() {
+  for (let j = 1; j <= NY; j++) {
+    let Hb = 0, alpha = 0, found = false;
+    for (let i = 1; i <= NX; i++) {
+      const idx = IX(i, j);
+      if (waveBreaking[idx]) { Hb = waveH[idx]; alpha = waveAngle[idx]; found = true; break; }
+    }
+    qLong[j] = found ? cercQ(Hb, alpha) : 0;
+  }
+
+  // Structure-influence smoothing. A groyne occupies fewer alongshore rows than the grid
+  // can resolve, so differencing it directly deposits the whole fillet into a single row —
+  // a spike, not a beach. Widening the transition to a few rows makes the deposit
+  // resolvable. This is a numerical treatment, not physics: a proper one-line model would
+  // derive the same length from shoreline curvature feeding back into the breaking angle.
+  const HALO = 6;
+  const tmp = new Float32Array(NY + 2);
+  for (let j = 1; j <= NY; j++) {
+    let sum = 0, n = 0;
+    for (let k = -HALO; k <= HALO; k++) {
+      const jj = j + k < 1 ? 1 : (j + k > NY ? NY : j + k);
+      sum += qLong[jj]; n++;
+    }
+    tmp[j] = sum / n;
+  }
+  for (let j = 1; j <= NY; j++) qLong[j] = tmp[j];
+
+  let sum = 0, n = 0, peak = 0;
+  for (let j = 1; j <= NY; j++) {
+    sum += qLong[j]; n++;
+    if (Math.abs(qLong[j]) > peak) peak = Math.abs(qLong[j]);
+  }
+  qLong[0] = qLong[1];
+  qLong[NY + 1] = qLong[NY];
+  qPeak = peak;
+  qMean = n ? sum / n : 0;
+}
+
+/**
+ * Apply the transport divergence over a model-time step.
+ * Volumetric: whatever leaves one cell arrives in the next, so the alongshore layer
+ * conserves sediment. The cross-shore relaxation does not, and they are kept apart.
+ */
+function applyLongshore(dtModel) {
+  if (!longGrid || !morphEnabled || dtModel <= 0) return;
+
+  const xMPerPx = REACH_CROSSSHORE / Math.max(width, 1);
+  const dyp = DEPO_CELL * (REACH_ALONGSHORE / Math.max(height, 1));   // metres per morph row
+
+  for (let gy = 0; gy < GH; gy++) {
+    const y = (gy + 0.5) * DEPO_CELL;
+    const j = Math.max(1, Math.min(NY, Math.round(y / cellH)));
+
+    // active zone: break point to shoreline, for this row
+    let iBreak = -1, iShore = -1;
+    for (let i = 1; i <= NX; i++) {
+      const idx = IX(i, j);
+      if (iBreak < 0 && waveBreaking[idx]) iBreak = i;
+      if (iShore < 0 && depthAt(i, j) <= 0.05) { iShore = i; break; }
+    }
+    if (iBreak < 1 || iShore <= iBreak) continue;
+
+    const Wact = Math.max((iShore - iBreak) * cellW * xMPerPx, 10);   // metres
+    const dQdy = (qLong[j + 1] - qLong[j - 1]) / (2 * dyp);           // m2/s
+    const dzdt = -(dQdy / ((1 - POROSITY_LS) * Wact)) * longshoreGain; // m/s
+    if (!isFinite(dzdt) || dzdt === 0) continue;
+    const dzUnits = dzdt * dtModel / M_PER_BED_UNIT;
+
+    const gx0 = Math.max(0, Math.floor((iBreak * cellW) / DEPO_CELL));
+    const gx1 = Math.min(GW - 1, Math.ceil((iShore * cellW) / DEPO_CELL));
+
+    for (let gx = gx0; gx <= gx1; gx++) {
+      const idx = gy * GW + gx;
+      longGrid[idx] += dzUnits;
+      if (longGrid[idx] >  300) longGrid[idx] =  300;
+      if (longGrid[idx] < -300) longGrid[idx] = -300;
+    }
+  }
+}
+
+/** Total and peak bed change held in the longshore layer, in metres. */
+function longshoreStats() {
+  if (!longGrid) return { min: 0, max: 0, mean: 0 };
+  let mn = 0, mx = 0, sum = 0;
+  for (let i = 0; i < longGrid.length; i++) {
+    const v = longGrid[i];
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+    sum += v;
+  }
+  return { min: mn * M_PER_BED_UNIT, max: mx * M_PER_BED_UNIT,
+           mean: sum / longGrid.length * M_PER_BED_UNIT };
+}
+
+// ─────────────────────────────────────────────
+// OBJECT VOCABULARY  (Phase 4)
+// ─────────────────────────────────────────────
+// Objects carry a `kind`. Structural kinds block the wave field through buildSolidMask;
+// nourishment does not — it is sand, not concrete.
+
+/** Sand placed over a nourishment object's footprint, at 0.5 m per model year. */
+const NOURISH_RATE = 0.5;
+
+function applyNourishment(dtModel) {
+  if (!morphGrid || dtModel <= 0) return;
+  const dYears = dtModel / (365 * 86400);
+
+  for (let o = 0; o < obstacles.length; o++) {
+    const ob = obstacles[o];
+    if ((ob.kind || 'structure') !== 'nourish') continue;
+    if (!isObstacleActive(ob)) continue;
+
+    const hw = obW(ob) / 2, hh = obH(ob) / 2;
+    const dz = (NOURISH_RATE * dYears) / M_PER_BED_UNIT;
+
+    for (let gy = 0; gy < GH; gy++) {
+      const y = (gy + 0.5) * DEPO_CELL;
+      if (Math.abs(y - ob.y) > hh) continue;
+      for (let gx = 0; gx < GW; gx++) {
+        const x = (gx + 0.5) * DEPO_CELL;
+        if (Math.abs(x - ob.x) > hw) continue;
+        const idx = gy * GW + gx;
+        morphGrid[idx] += dz;
+        if (morphGrid[idx] > 300) morphGrid[idx] = 300;
+      }
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
+// XBEACH EXPORT  (Phase 5)
+// ─────────────────────────────────────────────
+// Frames the current state as a case XBeach can read. Units are the whole story here:
+// params.txt wants D50 in METRES, this interface works in millimetres; bed.dep wants
+// elevations positive UP, so posdwn = -1 rather than flipping the data.
+
+const XB_NX = 120;          // cross-shore cells
+const XB_NY = 40;           // alongshore cells
+const XB_DTHETA = 10;       // directional resolution, degrees
+
+let xbHours = 6;            // simulated storm duration
+let xbMorfac = 10;          // morphological acceleration factor
+let xbStatus = '';
+
+const CRC_TABLE = (function () {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+/** Minimal store-only ZIP. One file in, three files out, no library. */
+function zipStore(files) {
+  const enc = new TextEncoder();
+  const parts = [], central = [];
+  let offset = 0;
+
+  for (let f = 0; f < files.length; f++) {
+    const nameBytes = enc.encode(files[f].name);
+    const data = files[f].data;
+    const crc = crc32(data), size = data.length;
+
+    const lh = new Uint8Array(30 + nameBytes.length);
+    const dv = new DataView(lh.buffer);
+    dv.setUint32(0, 0x04034b50, true);
+    dv.setUint16(4, 20, true);
+    dv.setUint16(8, 0, true);            // stored, no compression
+    dv.setUint32(14, crc, true);
+    dv.setUint32(18, size, true);
+    dv.setUint32(22, size, true);
+    dv.setUint16(26, nameBytes.length, true);
+    lh.set(nameBytes, 30);
+    parts.push(lh, data);
+
+    const ch = new Uint8Array(46 + nameBytes.length);
+    const cv = new DataView(ch.buffer);
+    cv.setUint32(0, 0x02014b50, true);
+    cv.setUint16(4, 20, true);
+    cv.setUint16(6, 20, true);
+    cv.setUint32(16, crc, true);
+    cv.setUint32(20, size, true);
+    cv.setUint32(24, size, true);
+    cv.setUint16(28, nameBytes.length, true);
+    cv.setUint32(42, offset, true);
+    ch.set(nameBytes, 46);
+    central.push(ch);
+
+    offset += lh.length + size;
+  }
+
+  let cSize = 0;
+  for (let i = 0; i < central.length; i++) cSize += central[i].length;
+
+  const eocd = new Uint8Array(22);
+  const ev = new DataView(eocd.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, files.length, true);
+  ev.setUint16(10, files.length, true);
+  ev.setUint32(12, cSize, true);
+  ev.setUint32(16, offset, true);
+
+  const out = new Uint8Array(offset + cSize + 22);
+  let p = 0;
+  for (let i = 0; i < parts.length; i++) { out.set(parts[i], p); p += parts[i].length; }
+  for (let i = 0; i < central.length; i++) { out.set(central[i], p); p += central[i].length; }
+  out.set(eocd, p);
+  return out;
+}
+
+/** Bed level at an XBeach grid corner, metres, positive up. */
+function xbBedAt(i, j) {
+  const xm = i * (REACH_CROSSSHORE / XB_NX);       // offshore at 0, dune at the land edge
+  const ym = j * (REACH_ALONGSHORE / XB_NY);
+  const px = xm * (width / REACH_CROSSSHORE);
+  const py = ym * (height / REACH_ALONGSHORE);
+  return bedZ(px, py) * M_PER_BED_UNIT;
+}
+
+/** Directional spread in degrees to the JONSWAP s parameter: s = 2/sigma^2 - 1. */
+function spreadToS(deg) {
+  const sig = Math.max(1, deg) * Math.PI / 180;
+  const s = 2 / (sig * sig) - 1;
+  return Math.min(1000, Math.max(1, s));
+}
+
+/** Shore-normal angle to nautical mainang. 270 deg is waves from the west, travelling +x. */
+function dirToNautical(dirDeg) {
+  let a = ((270 - dirDeg) % 360 + 360) % 360;
+  if (a < 180) a += 360;
+  return a;
+}
+
+function buildXBeach(opts) {
+  opts = opts || {};
+  const hours  = opts.hours  || xbHours;
+  const morfac = opts.morfac || xbMorfac;
+  const tstop  = Math.round(hours * 3600);
+  const dx = REACH_CROSSSHORE / XB_NX;
+  const dy = REACH_ALONGSHORE / XB_NY;
+
+  // ---------------- params.txt
+  const L = [];
+  L.push('%%% XBeach case exported from the Coastal Sediment Interface');
+  L.push('%%% Bed elevations are positive UP (posdwn = -1).');
+  L.push('');
+  L.push('%%% Grid parameters %%%');
+  L.push('depfile   = bed.dep');
+  L.push('posdwn    = -1');
+  L.push('nx        = ' + XB_NX);
+  L.push('ny        = ' + XB_NY);
+  L.push('dx        = ' + dx.toFixed(6));
+  L.push('dy        = ' + dy.toFixed(6));
+  L.push('vardx     = 0');
+  L.push('alfa      = 0');
+  L.push('xori      = 0');
+  L.push('yori      = 0');
+  L.push('');
+  L.push('%%% Directional grid %%%');
+  L.push('thetamin  = 180');
+  L.push('thetamax  = 360');
+  L.push('dtheta    = ' + XB_DTHETA);
+  L.push('thetanaut = 1');
+  L.push('');
+  L.push('%%% Model time %%%');
+  L.push('tstart    = 0');
+  L.push('tstop     = ' + tstop);
+  L.push('');
+  L.push('%%% Physical processes %%%');
+  L.push('swave     = 1');
+  L.push('lwave     = 1');
+  L.push('flow      = 1');
+  L.push('sedtrans  = 1');
+  L.push('morphology = 1');
+  L.push('nonh      = 0');
+  L.push('');
+  L.push('%%% Constants %%%');
+  L.push('rho       = ' + RHO);
+  L.push('g         = ' + GRAV);
+  L.push('');
+  L.push('%%% Water level %%%');
+  L.push('zs0       = ' + conditions.waterLevel.toFixed(4));
+  L.push('');
+  L.push('%%% Wave boundary condition %%%');
+  L.push('instat    = jons');
+  L.push('bcfile    = jonswap.txt');
+  L.push('rt        = 3600');
+  L.push('dtbc      = 0.5');
+  L.push('');
+  L.push('%%% Sediment %%%');
+  L.push('%%% D50 and D90 are in METRES here; the interface works in millimetres.');
+  L.push('D50       = ' + (conditions.d50 / 1000).toFixed(6));
+  L.push('D90       = ' + (conditions.d50 * 2 / 1000).toFixed(6));
+  L.push('rhos      = 2650');
+  L.push('por       = 0.4');
+  L.push('ngd       = 1');
+  L.push('nd        = 30');
+  L.push('');
+  L.push('%%% Morphology %%%');
+  L.push('morfac    = ' + morfac);
+  L.push('morstart  = 0');
+  L.push('morfacopt = 1');
+  L.push('wetslp    = 0.3');
+  L.push('dryslp    = 1.0');
+  L.push('');
+  L.push('%%% Output %%%');
+  // fortran = unformatted binary, which the plain (non-netCDF) executable supports.
+  // A build configured --with-netcdf can switch this to netcdf.
+  L.push('outputformat = fortran');
+  L.push('tintg     = ' + Math.max(60, Math.round(tstop / 20)));
+  L.push('nglobalvar = 3');
+  L.push('zb');
+  L.push('zs');
+  L.push('H');
+  const params = L.join('\n') + '\n';
+
+  // ---------------- bed.dep : ny+1 rows of nx+1 values, positive up
+  const rows = [];
+  for (let j = 0; j <= XB_NY; j++) {
+    const vals = [];
+    for (let i = 0; i <= XB_NX; i++) vals.push(xbBedAt(i, j).toFixed(4));
+    rows.push(vals.join(' '));
+  }
+  const bed = rows.join('\n') + '\n';
+
+  // ---------------- jonswap.txt
+  const J = [];
+  J.push('Hm0 = ' + conditions.Hs.toFixed(3));
+  J.push('Tp = ' + conditions.Tp.toFixed(2));
+  J.push('mainang = ' + dirToNautical(conditions.dirDeg).toFixed(1));
+  J.push('gammajsp = 3.3');
+  J.push('s = ' + spreadToS(conditions.spreadDeg).toFixed(1));
+  J.push('fnyq = 0.3');
+  const jonswap = J.join('\n') + '\n';
+
+  return { params: params, bed: bed, jonswap: jonswap, nx: XB_NX, ny: XB_NY, tstop: tstop };
+}
+
+function exportXBeach() {
+  const p = buildXBeach({ hours: xbHours, morfac: xbMorfac });
+  const enc = new TextEncoder();
+  const files = [
+    { name: 'params.txt',  data: enc.encode(p.params)  },
+    { name: 'bed.dep',     data: enc.encode(p.bed)     },
+    { name: 'jonswap.txt', data: enc.encode(p.jonswap) },
+  ];
+  const zip = zipStore(files);
+  const blob = new Blob([zip], { type: 'application/zip' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'xbeach-case.zip';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+
+  const el = document.getElementById('xb-status');
+  if (el) el.textContent = 'exported ' + (zip.length / 1024).toFixed(1) + ' KB · ' +
+                           XB_NX + 'x' + XB_NY + ' cells';
+}
+
+function buildSolidMask() {
+  solid.fill(0);
+  for (let ob of obstacles) {
+    if ((ob.kind || 'structure') === 'nourish') continue;   // sand, not concrete
+    if (!isObstacleActive(ob)) continue;
+    if (ob.type === 'poly') {
+      let a = ob.rotation * PI / 180, cosA = cos(a), sinA = sin(a);
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (let p of ob.points) {
+        let wx = ob.x + p.x * cosA - p.y * sinA, wy = ob.y + p.x * sinA + p.y * cosA;
+        if (wx < minX) minX = wx; if (wx > maxX) maxX = wx; if (wy < minY) minY = wy; if (wy > maxY) maxY = wy;
+      }
+      let i0 = max(1, floor(minX / cellW)), i1 = min(NX, ceil(maxX / cellW));
+      let j0 = max(1, floor(minY / cellH)), j1 = min(NY, ceil(maxY / cellH));
+      for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
+          let idx = IX(i, j);
+          if (solid[idx]) continue;
+          let lp = polyToLocal(ob, i * cellW, j * cellH);
+          if (pointInPoly(lp.x, lp.y, ob.points)) solid[idx] = 1;
+        }
+      }
+      continue;
+    }
+    let hw = obW(ob) / 2, hh = obH(ob) / 2;
+    let rg = max(hw, hh) / ((cellW + cellH) / 2);
+    let cx = ob.x / cellW, cy = ob.y / cellH;
+    let i0 = max(1, floor(cx - rg - 1)), i1 = min(NX, ceil(cx + rg + 1));
+    let j0 = max(1, floor(cy - rg - 1)), j1 = min(NY, ceil(cy + rg + 1));
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        let idx = IX(i, j);
+        if (solid[idx]) continue;
+        let wx = i * cellW - ob.x, wy = j * cellH - ob.y;
+        if (ob.type === 'circle') {
+          if (wx * wx + wy * wy <= (obW(ob)/2) * (obW(ob)/2)) solid[idx] = 1;
+        } else {
+          let cosA = cos(-ob.rotation * PI / 180), sinA = sin(-ob.rotation * PI / 180);
+          let rx = wx * cosA - wy * sinA, ry = wx * sinA + wy * cosA;
+          if (abs(rx) <= hw && abs(ry) <= hh) solid[idx] = 1;
+        }
+      }
+    }
+  }
+}
+
+
+// ─────────────────────────────────────────────
+// PARTICLES
+// ─────────────────────────────────────────────
+function getVelocityAt(px, py) {
+  let i = constrain(floor(px / cellW), 0, NX+1);
+  let j = constrain(floor(py / cellH), 0, NY+1);
+  let idx = IX(i, j);
+  return { vx: solid[idx] ? 0 : u[idx] * cellW, vy: solid[idx] ? 0 : v[idx] * cellH };
+}
+
+function timelineLoopTime() {
+  // Model years, not seconds. The timeline and the morphology must share one clock, or an
+  // object clipped to 2050 activates at a moment the bed has no idea about.
+  let T = timelineDuration;
+  let t = modelYears;
+  if (!timelinePingPong) return ((t % T) + T) % T;
+  let m = ((t % (2 * T)) + 2 * T) % (2 * T);         // position in a full back-and-forth cycle
+  return m <= T ? m : 2 * T - m;                     // bounce at the ends
+}
+
+function isObstacleActive(ob) {
+  let T = timelineDuration;
+  let loopT = timelineLoopTime();
+  let clips = ob.clips || [];
+  for (let c of clips) {
+    let start = ((c.start || 0) % T + T) % T;        // normalize into [0,T)
+    let dur = (c.dur == null) ? DEFAULT_OBJ_DUR : c.dur;
+    if (dur <= 0) continue;
+    if (dur >= T) return true;                       // spans the whole loop
+    let end = start + dur;
+    if (end <= T) { if (loopT >= start && loopT < end) return true; }
+    else { if (loopT >= start || loopT < (end - T)) return true; }   // wraps loop end
+  }
+  return false;
+}
+
+function isInsideObstacle(px, py) {
+  for (let ob of obstacles) {
+    if (!isObstacleActive(ob)) continue;
+    if (ob.type === 'poly') { let lp = polyToLocal(ob, px, py); if (pointInPoly(lp.x, lp.y, ob.points)) return true; continue; }
+    let dx = px - ob.x, dy = py - ob.y;
+    if (ob.type === 'circle') {
+      if (dx*dx + dy*dy <= (obW(ob)/2)*(obW(ob)/2)) return true;
+    } else {
+      let cosA = cos(-ob.rotation * PI / 180), sinA = sin(-ob.rotation * PI / 180);
+      let rx = dx * cosA - dy * sinA, ry = dx * sinA + dy * cosA;
+      if (abs(rx) <= obW(ob)/2 && abs(ry) <= obH(ob)/2) return true;
+    }
+  }
+  return false;
+}
+
+function spawnParticle() {
+  // Suspended sediment fills the water, rather than entering as an inflow stream: seed
+  // across the offshore portion of the reach so the whole surf zone is populated.
+  let x = random(cellW, width * 0.70), y = random(cellH, height - cellH);
+  return { x, y, vx: random(0, 0.15) * cellW, vy: random(-0.3,0.3)*cellH, born: simTime - random(0, MAX_PARTICLE_AGE) };
+}
+
+function initParticles() {
+  particles = []; deposited = [];
+  for (let i = 0; i < particleCount; i++) particles.push(spawnParticle());
+}
+
+function settleParticle(p, bedHere) {
+  deposited.push({ x: p.x, y: p.y, z: bedHere, born: simTime });
+  addDeposit(p.x, p.y, DEPO_AMOUNT);   // raise the bed where sediment settles
+}
+
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    let p = particles[i];
+    let vel = getVelocityAt(p.x, p.y);
+    // Gradual velocity response (inertia) instead of instant assignment
+    p.vx += (vel.vx - p.vx) * 0.35;
+    p.vy += (vel.vy - p.vy) * 0.35;
+    // Turbulent diffusion: noise perturbs velocity, not position
+    let flowSpd = mag(vel.vx, vel.vy);
+    p.vx += (noise(p.x*0.02, p.y*0.02, simTime*0.3) - 0.5) * 0.12 * flowSpd;
+    p.vy += (noise(p.x*0.02+50, p.y*0.02, simTime*0.3) - 0.5) * 0.12 * flowSpd;
+
+    let bedHere = 0;
+    if (bedPoints.length >= 2) {
+      bedHere = bedZ(p.x, p.y);
+      // Gravity: slide particles DOWN the bed slope, scaled by the LOCAL gradient.
+      // The old version pushed at a CONSTANT speed on any slope however gentle, so a
+      // drawn cross-section funnelled every particle into its single deepest line (the
+      // thalweg) and collapsed the full mesh into one thin channel. Proportional
+      // scaling makes it a gentle drift: flat/near-flat parts barely move particles,
+      // only genuinely steep slopes slide them, so the flow re-spreads them across the
+      // whole cross-section instead of pinching them to one line.
+      let bedAbove = bedZ(p.x, max(0, p.y - 4)), bedBelow = bedZ(p.x, min(height, p.y + 4));
+      let bedLeft = bedZ(max(0, p.x - 4), p.y), bedRight = bedZ(min(width, p.x + 4), p.y);
+      let gradY = (bedAbove - bedBelow) / 8;   // + = downhill toward +y
+      let gradX = (bedLeft - bedRight) / 8;    // + = downhill toward +x
+      // Coastal reach: gentle profile gradients (a 1:10 shoreface, not a flume bed), so
+      // these gains are much smaller than the fluvial ones. At the fluvial setting the
+      // downdip pull overwhelms the wave drift and pins every particle to the offshore edge.
+      p.vy += gradY * cellH * 0.15;
+      p.vx += gradX * cellW * 0.05;
+    }
+
+    // FLOW: ×4 rescales the Stam field velocity (u*cellW) to a stable visual drift.
+    // The solver advects the field by u*DT*NX cells/frame (dt0 convention), and at
+    // inflow 2.5 (32× over CFL) the literal speed teleports. ×4 keeps ~8 px/frame.
+    p.x += p.vx * DT * 4;
+    p.y += p.vy * DT * 4;
+
+
+
+    let age = simTime - (p.born||0);
+    if (p.x < 0 || p.x > width || p.y < 0 || p.y > height || age > MAX_PARTICLE_AGE) { particles.splice(i,1); continue; }
+    let hitObstacle = false;
+    if (isInsideObstacle(p.x, p.y)) {
+      for (let ob of obstacles) {
+        if (!isObstacleActive(ob)) continue;
+        let dx = p.x - ob.x, dy = p.y - ob.y, nx = 0, ny = 0, pen = 0;
+        if (ob.type === 'circle') {
+          let r = obW(ob) / 2, d = Math.sqrt(dx * dx + dy * dy);
+          if (d >= r || d === 0) continue;
+          nx = dx / d; ny = dy / d; pen = r - d;
+        } else if (ob.type === 'poly') {
+          let lp = polyToLocal(ob, p.x, p.y);
+          if (!pointInPoly(lp.x, lp.y, ob.points)) continue;
+          let pts = ob.points, n = pts.length, bestA = null, bestB = null, bestD = Infinity;
+          for (let k = 0; k < n; k++) {
+            let a = pts[k], b = pts[(k + 1) % n];
+            let dd = distToSeg(lp.x, lp.y, a.x, a.y, b.x, b.y);
+            if (dd < bestD) { bestD = dd; bestA = a; bestB = b; }
+          }
+          if (!bestA) continue;
+          let ex = bestB.x - bestA.x, ey = bestB.y - bestA.y;
+          let len = Math.sqrt(ex * ex + ey * ey) || 1;
+          let n1x = -ey / len, n1y = ex / len;
+          let mxx = (bestA.x + bestB.x) / 2, myy = (bestA.y + bestB.y) / 2;
+          let away = (n1x * mxx + n1y * myy) >= 0 ? 1 : -1;
+          let lnx = away * n1x, lny = away * n1y;
+          let ra = ob.rotation * PI / 180, rcos = cos(ra), rsin = sin(ra);
+          nx = lnx * rcos - lny * rsin; ny = lnx * rsin + lny * rcos;
+          pen = bestD;
+        } else {
+          let a = -ob.rotation * PI / 180, cosA = Math.cos(a), sinA = Math.sin(a);
+          let rx = dx * cosA - dy * sinA, ry = dx * sinA + dy * cosA;
+          let hw = obW(ob) / 2, hh = obH(ob) / 2;
+          if (Math.abs(rx) >= hw || Math.abs(ry) >= hh) continue;
+          let penX = hw - Math.abs(rx), penY = hh - Math.abs(ry);
+          if (penX < penY) { nx = Math.sign(rx) * cosA; ny = Math.sign(rx) * sinA; pen = penX; }
+          else { nx = -Math.sign(ry) * sinA; ny = Math.sign(ry) * cosA; pen = penY; }
+        }
+        p.x += nx * (pen + 0.5); p.y += ny * (pen + 0.5);
+        let vn = p.vx * nx + p.vy * ny;
+        if (vn < 0) { p.vx -= 1.4 * vn * nx; p.vy -= 1.4 * vn * ny; }
+        hitObstacle = true;
+      }
+    }
+
+    // Sediment slamming into an obstacle sticks to it instead of bouncing forever,
+    // so deposits build up against obstructions. A particle pinned against an
+    // obstacle re-collides each frame, so it settles within a fraction of a second.
+    if (hitObstacle && p.x > MIN_TRAVEL_X && age > MIN_PARTICLE_AGE && random() < settleProb * 4.0) {
+      settleParticle(p, bedHere);
+      particles.splice(i, 1);
+      continue;
+    }
+
+    let speed = mag(p.vx, p.vy) / ((cellW+cellH)/2);
+
+    // Bed deposition: particles flowing over the drawn bed settle onto its surface,
+    // so the deposited sediment accretes along the bedform and traces its shape. The
+    // rate scales with bed height. Without this, settling only happened where the
+    // flow stalls (near obstacles), so the drawn bedform was effectively ignored and
+    // the particles never "followed" it.
+    let onBed = bedHere > 1;
+    if (onBed && p.x > MIN_TRAVEL_X && age > MIN_PARTICLE_AGE) {
+      let bedDep = settleProb * (1.0 + (bedHere / 160) * 4.0);   // 1x..5x settleProb
+      if (random() < bedDep) {
+        settleParticle(p, bedHere);
+        particles.splice(i, 1);
+        continue;
+      }
+    }
+
+    // Speed-graded settling: the slower a particle, the more readily it deposits.
+    // A hard threshold made settling all-or-nothing; now slowness scales the chance
+    // (a particle at rest settles ~9x faster than one just under the threshold).
+    let bedSettleBoost = bedHere > 0 ? 1.0 + (bedHere/160)*4.0 : 1.0;
+    let slow = speed < settleThresh ? 1.0 - speed / settleThresh : 0.0;
+    if (p.x > MIN_TRAVEL_X && age > MIN_PARTICLE_AGE && speed < settleThresh && random() < settleProb * bedSettleBoost * (1.0 + slow * 8.0)) {
+      settleParticle(p, bedHere);
+      particles.splice(i, 1);
+    }
+  }
+
+  for (let i = deposited.length - 1; i >= 0; i--) {
+    let d = deposited[i];
+    let vel = getVelocityAt(d.x, d.y);
+    let speed = mag(vel.vx, vel.vy) / ((cellW+cellH)/2);
+    if (speed > erosionThresh && random() < erosionProb) {
+      let bedHere2 = bedPoints.length >= 2 ? bedZ(d.x, d.y) : 0;
+      let resist = bedHere2 > 0 ? 1.0/(1.0 + (bedHere2/160)*2.0) : 1.0;
+      if (random() > resist) continue;
+      addDeposit(d.x, d.y, -DEPO_AMOUNT);   // erode accumulated bed height
+      particles.push({ x: d.x+random(-3,3), y: d.y+random(-3,3), vx: vel.vx+random(-0.5,0.5), vy: vel.vy+random(-0.5,0.5), born: simTime });
+      deposited.splice(i, 1);
+    }
+  }
+
+  // Cap tracked deposits: oldest 'compact' into the bed (visual persists in depoBuffer,
+  // no longer erodible). Keeps the deposited array bounded.
+  if (deposited.length > particleCount) deposited.splice(0, deposited.length - particleCount);
+
+  while (particles.length < particleCount) {
+    let spawnX = random(cellW, cellW*3), spawnY;
+    if (bedPoints.length >= 2) {
+      let yLo=cellH, yHi=height-cellH, found=false;
+      for (let sy=cellH; sy<height-cellH; sy+=4) { if(bedZ(spawnX,sy)>5){if(!found){yLo=sy;found=true;}yHi=sy;} }
+      spawnY = found && yHi>yLo ? random(yLo,yHi) : random(cellH,height-cellH);
+    } else { spawnY = random(cellH, height-cellH); }
+    particles.push({ x:spawnX, y:spawnY, vx:random(inflowVel*0.5,inflowVel*1.5)*cellW, vy:random(-0.2,0.2)*cellH, born:simTime - random(0, MAX_PARTICLE_AGE) });
+  }
+}
+
+// ─────────────────────────────────────────────
+// VISUAL RENDERING
+// ─────────────────────────────────────────────
+function redrawDepoBuffer() {
+  depoBuffer.clear();
+  depoBuffer.noStroke();
+  let sr=parseInt(depoRecentColor.slice(1,3),16), sg=parseInt(depoRecentColor.slice(3,5),16), sb=parseInt(depoRecentColor.slice(5,7),16);
+  let or=parseInt(depoOldestColor.slice(1,3),16), og=parseInt(depoOldestColor.slice(3,5),16), ob=parseInt(depoOldestColor.slice(5,7),16);
+  for (let d of deposited) {
+    let t = constrain((simTime - (d.born || 0)) / MAX_PARTICLE_AGE, 0, 1);  // 0 = recent, 1 = oldest
+    let r = sr + (or - sr) * t, g = sg + (og - sg) * t, b = sb + (ob - sb) * t;
+    depoBuffer.fill(r, g, b, 110); depoBuffer.ellipse(d.x, d.y, depoSize, depoSize);
+    depoBuffer.fill(r, g, b, 230); depoBuffer.ellipse(d.x, d.y, depoSize * 0.55, depoSize * 0.55);
+  }
+}
+
+function drawDeposition() {
+  // Dots are drawn once at settle time (in updateParticles); redrawing every frame
+  // would stack alpha and darken deposition into a solid blob.
+}
+
+function drawFlowField() {
+  if (!showFlow) return;
+  stroke(0,200,255,flowOpacity); strokeWeight(1.2);
+  let step = max(1, floor(min(NX,NY)/flowDensity));
+  for (let j=step; j<=NY; j+=step) {
+    for (let i=step; i<=NX; i+=step) {
+      let idx = IX(i,j);
+      if (solid[idx]) continue;
+      let px = i*cellW, py = j*cellH;
+      let spd = mag(u[idx],v[idx]);
+      if (spd<0.001) continue;
+      let nx = u[idx]/spd, ny = v[idx]/spd;
+      let len = constrain(spd*flowScale, 8, 55);
+      line(px,py, px+nx*len, py+ny*len);
+      let ax=px+nx*len, ay=py+ny*len, tip=4;
+      line(ax,ay, ax-nx*tip-ny*tip*0.5, ay-ny*tip+nx*tip*0.5);
+      line(ax,ay, ax-nx*tip+ny*tip*0.5, ay-ny*tip-nx*tip*0.5);
+    }
+  }
+}
+
+function drawSpotElevations() {
+  if (!showElev) return;
+  let step = max(1, floor(min(NX,NY)/flowDensity));
+  noStroke();
+  textAlign(CENTER, BOTTOM); textSize(9);
+  for (let j=step; j<=NY; j+=step) {
+    for (let i=step; i<=NX; i+=step) {
+      let idx = IX(i,j);
+      if (solid[idx]) continue;
+      let px = i*cellW, py = j*cellH;
+      let z = bedZ(px, py);   // combined bed + deposition elevation
+      if (z > 0) {
+        fill(255,215,110,200); ellipse(px, py, 4, 4);
+        fill(255,235,170,235); text(Math.round(z), px, py - 4);
+      } else {
+        fill(255,255,255,70); ellipse(px, py, 2, 2);
+      }
+    }
+  }
+}
+
+function drawGrid() { /* now inline */ }
+
+function drawObstacles() {
+  for (let i=0; i<obstacles.length; i++) {
+    let ob = obstacles[i];
+    if (!isObstacleActive(ob)) continue;
+
+    if (ob.type === 'poly') {
+      push(); translate(ob.x, ob.y); rotate(ob.rotation*PI/180);
+      if (i===selectedIdx) { stroke(255,255,255,220); strokeWeight(2.5); }
+      else { stroke(255,255,255,140); strokeWeight(1.5); }
+      noFill();
+      beginShape();
+      for (let p of ob.points) vertex(p.x, p.y);
+      endShape(CLOSE);
+      if (i===selectedIdx) {
+        stroke(255,200,100,80); strokeWeight(4);
+        beginShape(); for (let p of ob.points) vertex(p.x, p.y); endShape(CLOSE);
+        for (let p of ob.points) { noStroke(); fill(255,200,100,230); ellipse(p.x, p.y, 8, 8); }
+      }
+      pop();
+      fill(255,255,255,220); noStroke(); textAlign(CENTER, CENTER); textSize(12);
+      text(String(i + 1), ob.x, ob.y);
+      continue;
+    }
+
+    let hw = obW(ob)/2, hh = obH(ob)/2;
+    push(); translate(ob.x, ob.y); rotate(ob.rotation*PI/180);
+    noFill();
+    if (i===selectedIdx) { stroke(255,255,255,220); strokeWeight(2.5); }
+    else { stroke(255,255,255,140); strokeWeight(1.5); }
+    if (ob.type==='circle') ellipse(0,0,obW(ob)); else { rectMode(CENTER); rect(0,0,obW(ob),obH(ob)); }
+    if (i===selectedIdx) { stroke(255,200,100,80); strokeWeight(4); if(ob.type==='circle')ellipse(0,0,obW(ob)+6);else rect(0,0,obW(ob)+6,obH(ob)+6); }
+    stroke(255,255,255,60); strokeWeight(0.5); line(-8,0,8,0); line(0,-8,0,8);
+    pop();
+
+    if (i===selectedIdx) {
+      let cosT = cos(ob.rotation*PI/180), sinT = sin(ob.rotation*PI/180);
+      let handlePts = (ob.type==='circle')
+        ? [[hw,0],[0,hh],[-hw,0],[0,-hh]]
+        : [[-hw,-hh],[0,-hh],[hw,-hh],[hw,0],[hw,hh],[0,hh],[-hw,hh],[-hw,0]];
+      for (let h of handlePts) {
+        let wx = ob.x + h[0]*cosT - h[1]*sinT;
+        let wy = ob.y + h[0]*sinT + h[1]*cosT;
+        fill(255,255,255,235); stroke(255,200,100,200); strokeWeight(1); rectMode(CENTER);
+        rect(wx, wy, 9, 9);
+      }
+    }
+
+    // timeline index centered on the object (upright, not rotated)
+    fill(255,255,255,220); noStroke(); textAlign(CENTER, CENTER); textSize(12);
+    text(String(i + 1), ob.x, ob.y);
+  }
+}
+
+function drawGhost() {
+  if (ghostType === 'poly') { drawPolyPreview(); return; }
+  if (paused || dragging || mouseX<0||mouseX>width||mouseY<0||mouseY>height) return;
+  let over = hitTestObstacle(mouseX,mouseY) >= 0;
+  push(); translate(mouseX,mouseY); rotate(ghostRotation*PI/180);
+  drawingContext.setLineDash([4,4]);
+  noFill(); stroke(over?'rgba(255,255,255,0.1)':'rgba(255,255,255,0.25)'); strokeWeight(1.2);
+  let half=ghostSize/2;
+  if (ghostType==='circle') ellipse(0,0,ghostSize); else { rectMode(CENTER); rect(0,0,ghostSize,ghostSize); }
+  drawingContext.setLineDash([]);
+  stroke(255,255,255,50); strokeWeight(0.8); line(0,0,half+8,0);
+  pop();
+}
+
+function drawParticlesToBuffer() {
+  trailBuffer.noStroke();
+  let sr=parseInt(slowColor.slice(1,3),16), sg=parseInt(slowColor.slice(3,5),16), sb=parseInt(slowColor.slice(5,7),16);
+  let fr=parseInt(fastColor.slice(1,3),16), fg=parseInt(fastColor.slice(3,5),16), fb=parseInt(fastColor.slice(5,7),16);
+  for (let p of particles) {
+    let speed = mag(p.vx,p.vy)/((cellW+cellH)/2);
+    let t = constrain(speed/colorThresh, 0, 1);
+    trailBuffer.fill(floor(sr+(fr-sr)*t), floor(sg+(fg-sg)*t), floor(sb+(fb-sb)*t), 40+t*40);
+    trailBuffer.ellipse(p.x, p.y, particleSize, particleSize);
+  }
+}
+
+function drawParticles() {
+  noStroke();
+  let sr=parseInt(slowColor.slice(1,3),16), sg=parseInt(slowColor.slice(3,5),16), sb=parseInt(slowColor.slice(5,7),16);
+  let fr=parseInt(fastColor.slice(1,3),16), fg=parseInt(fastColor.slice(3,5),16), fb=parseInt(fastColor.slice(5,7),16);
+  for (let p of particles) {
+    let speed = mag(p.vx,p.vy)/((cellW+cellH)/2);
+    let t = constrain(speed/colorThresh, 0, 1);
+    fill(floor(sr+(fr-sr)*t), floor(sg+(fg-sg)*t), floor(sb+(fb-sb)*t), 150+t*90);
+    ellipse(p.x, p.y, particleSize, particleSize);
+  }
+}
+
+// ── Bed surface render ──
+let bedSample = null, bedDz = null;
+
+function updateBedBuffer() {
+  rebuildUserBedGrid();
+  bedSurface.clear();
+
+  // Sample the bed ONCE per cell and let the wash, the height ramp and the contours all read
+  // the same array. The earlier version called bedZ() independently in each of the three
+  // passes -- around half a million lookups per refresh -- and that single function was 99 ms
+  // of a 136 ms frame.
+  const STEP = 4;
+  const NW = Math.ceil(width / STEP), NH = Math.ceil(height / STEP);
+  if (!bedSample || bedSample.length !== NW * NH) {
+    bedSample = new Float32Array(NW * NH);
+    bedDz = new Float32Array(NW * NH);
+  }
+  for (let iy = 0; iy < NH; iy++) {
+    const py = iy * STEP;
+    for (let ix = 0; ix < NW; ix++) {
+      const px = ix * STEP, k = iy * NW + ix;
+      // One lookup of each component instead of calling bedZ() AND bedZ0(), which together
+      // walked userBedZ and depoZ twice per cell. The wash only needs the morphology layers.
+      const mo = morphZ(px, py), lo = longZ(px, py);
+      bedSample[k] = userBedZ(px, py) + depoZ(px, py) + mo + lo;
+      bedDz[k] = (mo + lo) * M_PER_BED_UNIT;
+    }
+  }
+
+  const ovStep = 8, os = ovStep / STEP;
+
+  // Morphology-change wash. The height ramp below only colours the subaerial bed, so a bar
+  // or a groyne fillet -- both underwater -- would otherwise be invisible. Warm is accretion,
+  // cool is erosion; the layer is the difference from the base bed.
+  for (let iy = 0; iy < NH; iy += os) {
+    for (let ix = 0; ix < NW; ix += os) {
+      const dz = bedDz[iy * NW + ix];
+      if (Math.abs(dz) < 0.02) continue;
+      const t = Math.min(1, Math.abs(dz) / 0.8);
+      if (dz > 0) bedSurface.fill(255, 190, 90, 25 + t * 95);
+      else        bedSurface.fill(90, 160, 255, 25 + t * 95);
+      bedSurface.rect(ix * STEP, iy * STEP, ovStep, ovStep);
+    }
+  }
+
+  // Subaerial height ramp.
+  const bedMaxZ = 160;
+  bedSurface.noStroke();
+  for (let iy = 0; iy < NH; iy += os) {
+    for (let ix = 0; ix < NW; ix += os) {
+      const z = bedSample[iy * NW + ix];
+      if (z <= 0) continue;
+      const t = Math.min(1, z / bedMaxZ);
+      bedSurface.fill(40 + t * 80, 20 + t * 35, 10 + t * 15, 10 + t * 40);
+      bedSurface.rect(ix * STEP, iy * STEP, ovStep, ovStep);
+    }
+  }
+
+  // Contours, straight off the sampled grid -- no further bed lookups.
+  const levels = [20, 40, 60, 80, 100, 120, 140];
+  for (const lvl of levels) {
+    bedSurface.stroke(255, 200, 130, 25 + (lvl / bedMaxZ) * 50);
+    bedSurface.strokeWeight(0.5);
+    for (let iy = 0; iy < NH; iy++) {
+      const row = iy * NW, py = iy * STEP;
+      for (let ix = 1; ix < NW; ix++) {
+        const prevZ = bedSample[row + ix - 1], currZ = bedSample[row + ix];
+        if ((prevZ - lvl) * (currZ - lvl) < 0 && prevZ > 0 && currZ > 0) {
+          const t = (lvl - prevZ) / (currZ - prevZ);
+          bedSurface.point((ix - 1) * STEP + t * STEP, py);
+        }
+      }
+    }
+    for (let ix = 0; ix < NW; ix++) {
+      const px = ix * STEP;
+      for (let iy = 1; iy < NH; iy++) {
+        const prevZ = bedSample[(iy - 1) * NW + ix], currZ = bedSample[iy * NW + ix];
+        if ((prevZ - lvl) * (currZ - lvl) < 0 && prevZ > 0 && currZ > 0) {
+          const t = (lvl - prevZ) / (currZ - prevZ);
+          bedSurface.point(px, (iy - 1) * STEP + t * STEP);
+        }
+      }
+    }
+  }
+}
+
+function drawBedProfile() {
+  if (!bedMode) return;
+  let stripH=160, stripY=height-stripH, bedMaxZ=160;
+
+  noStroke(); fill(10,12,22,200); rect(0,stripY,width,stripH);
+  stroke(40,40,55,60); strokeWeight(0.5);
+  for (let gz=20; gz<bedMaxZ; gz+=20) { let gy=stripY+stripH-(gz/bedMaxZ)*stripH; line(0,gy,width,gy); noStroke(); fill(255,255,255,30); textAlign(RIGHT,CENTER); textSize(9); text(gz,22,gy); }
+  stroke(60,60,80,100); strokeWeight(1); line(0,stripY,width,stripY);
+  noStroke(); fill(255,255,255,50); textAlign(LEFT,TOP); textSize(10); text('bed profile (z↑)',8,stripY+4);
+
+  if (bedPoints.length >= 2) {
+    fill(30,28,45,120); noStroke(); beginShape();
+    for (let pt of bedPoints) { let sy=stripY+stripH-(pt.z/bedMaxZ)*stripH; vertex(pt.x,sy); }
+    vertex(bedPoints[bedPoints.length-1].x, stripY+stripH); vertex(bedPoints[0].x, stripY+stripH); endShape(CLOSE);
+    stroke(255,180,60,200); strokeWeight(2); noFill(); beginShape();
+    for (let pt of bedPoints) { let sy=stripY+stripH-(pt.z/bedMaxZ)*stripH; vertex(pt.x,sy); }
+    endShape();
+    for (let pt of bedPoints) { let sy=stripY+stripH-(pt.z/bedMaxZ)*stripH; fill(255,180,60,200); noStroke(); ellipse(pt.x,sy,6,6); }
+    stroke(255,180,60,30); strokeWeight(1);
+    for (let zLevel=20; zLevel<=bedMaxZ; zLevel+=20) { beginShape(); for (let pt of bedPoints) { if(pt.z>=zLevel) vertex(pt.x,0); else { endShape(); beginShape(); } } endShape(); }
+  }
+
+  if (bedMode && mouseX>=0 && mouseX<=width && mouseY>=stripY) {
+    let mz=(stripY+stripH-mouseY)/stripH*bedMaxZ; mz=max(0,min(bedMaxZ*2,mz));
+    noStroke(); fill(255,200,100,150); ellipse(mouseX, stripY+stripH-(mz/bedMaxZ)*stripH, 8,8);
+    if (bedPoints.length>0) {
+      let last=bedPoints[bedPoints.length-1];
+      let lastSY=stripY+stripH-(last.z/bedMaxZ)*stripH;
+      stroke(255,200,100,60); strokeWeight(1); line(last.x,lastSY, mouseX, stripY+stripH-(mz/bedMaxZ)*stripH);
+    }
+  }
+
+  let xStripW=60;
+  for (let si=0; si<bedPoints.length; si++) {
+    let pt=bedPoints[si], baseZ=pt.z, sx=pt.x-xStripW/2;
+    noStroke(); fill(si===activeXSection?'rgba(40,35,55,0.85)':'rgba(25,22,40,0.7)'); rect(sx,0,xStripW,stripY);
+    stroke(40,40,55,40); strokeWeight(0.5);
+    for (let gz=20; gz<=bedMaxZ; gz+=20) { let gx=sx+xStripW-(gz/bedMaxZ)*xStripW; line(gx,0,gx,stripY); }
+    stroke(si===activeXSection?'rgba(255,180,60,0.5)':'rgba(60,60,80,0.3)'); strokeWeight(1); noFill(); rect(sx,0,xStripW,stripY);
+    noStroke(); fill(255,255,255,40); textAlign(CENTER,TOP); textSize(8); text('x'+Math.round(pt.x),pt.x,2);
+    textAlign(RIGHT,BOTTOM); textSize(7); fill(255,255,255,25); text('hi',sx+2,stripY-2); textAlign(LEFT,BOTTOM); text('lo',sx+xStripW-12,stripY-2);
+
+    let xsData=bedXSections.find(xs=>xs.x===pt.x);
+    if (xsData && xsData.points.length>=2) {
+      let pts=[...xsData.points].sort((a,b)=>a.y-b.y);
+      stroke(255,180,60,180); strokeWeight(2); noFill(); beginShape();
+      for (let p of pts) {
+        let vy=p.y/height*stripY, absZ=baseZ+p.z, vx=sx+xStripW-(absZ/bedMaxZ)*xStripW; vx=constrain(vx,sx,sx+xStripW);
+        vertex(vx,vy);
+      }
+      endShape();
+      for (let p of pts) {
+        let vy=p.y/height*stripY, absZ=baseZ+p.z, vx=sx+xStripW-(absZ/bedMaxZ)*xStripW; vx=constrain(vx,sx,sx+xStripW);
+        fill(255,180,60,200); noStroke(); ellipse(vx,vy,5,5);
+      }
+    }
+    let refX=sx+xStripW-(baseZ/bedMaxZ)*xStripW; stroke(255,255,255,25); strokeWeight(0.5); line(refX,0,refX,stripY);
+    if (si===activeXSection) { noFill(); stroke(255,200,100,80); strokeWeight(1.5); rect(sx-1,0,xStripW+2,stripY); }
+  }
+}
+
+// ── Isometric bed thumbnail ──
+function updateBedThumb() {
+  let canvas=document.getElementById('bed-thumb'), ctx=bedThumb, TW=canvas.width, TH=canvas.height;
+  ctx.clearRect(0,0,TW,TH);
+  if (bedPoints.length < 2) { ctx.fillStyle='rgba(255,255,255,0.08)'; ctx.font='10px Courier New'; ctx.textAlign='center'; ctx.fillText('no bed defined',TW/2,TH/2); return; }
+  let margin=18, viewW=TW-margin*2, viewH=TH-margin*2, bedMaxZ=160;
+  let ax=thumbAngleX*PI/180, ay=thumbAngleY*PI/180;
+  let cosAX=cos(ax), sinAX=sin(ax), cosAY=cos(ay), sinAY=sin(ay);
+  let sortedPts=[...bedPoints].sort((a,b)=>a.x-b.x);
+  let xMin=sortedPts[0].x, xMax=sortedPts[sortedPts.length-1].x, xRange=xMax-xMin||1;
+
+  function projectRaw(x_px,y_px,z_px) {
+    let nx=(x_px-xMin)/xRange-0.5, ny=(y_px/height-0.5)*0.45;
+    let zScale=parseFloat(document.getElementById('z-scale').value)/100;
+    let nz=z_px/bedMaxZ*zScale;
+    let rx=nx*cosAX-ny*sinAX, ry=nx*sinAX+ny*cosAX;
+    return {x:rx, y:ry*cosAY-nz*sinAY, depth:ry*sinAY+nz*cosAY};
+  }
+
+  let allPts=[];
+  for (let pt of sortedPts) allPts.push(projectRaw(pt.x,height/2,pt.z));
+  for (let xs of bedXSections) {
+    let station=sortedPts.find(p=>p.x===xs.x); if(!station) continue;
+    for (let rp of xs.points) allPts.push(projectRaw(xs.x,rp.y,station.z+rp.z));
+  }
+  let bxMin=Infinity,bxMax=-Infinity,byMin=Infinity,byMax=-Infinity;
+  for (let p of allPts) { if(p.x<bxMin)bxMin=p.x; if(p.x>bxMax)bxMax=p.x; if(p.y<byMin)byMin=p.y; if(p.y>byMax)byMax=p.y; }
+  let scale=min(viewW/(bxMax-bxMin||1), viewH/(byMax-byMin||1))*0.88;
+  let cx=(bxMin+bxMax)/2, cy=(byMin+byMax)/2;
+
+  function project(x_px,y_px,z_px) {
+    let raw=projectRaw(x_px,y_px,z_px);
+    return {x:margin+viewW/2+(raw.x-cx)*scale, y:margin+viewH/2+(raw.y-cy)*scale, depth:raw.depth};
+  }
+
+  ctx.fillStyle='rgba(10,12,22,0.92)'; ctx.fillRect(0,0,TW,TH);
+  ctx.strokeStyle='rgba(255,255,255,0.04)'; ctx.lineWidth=0.5;
+  for (let gz=0; gz<=bedMaxZ; gz+=40) { let p0=project(xMin,height/2,gz), p1=project(xMax,height/2,gz); ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.stroke(); }
+
+  let ribs=[];
+  for (let pt of sortedPts) {
+    let xsData=bedXSections.find(xs=>xs.x===pt.x); if(!xsData||xsData.points.length<2) continue;
+    let pts=[...xsData.points].sort((a,b)=>a.y-b.y), ribPts=[], maxDepth=-Infinity;
+    for (let rp of pts) { let proj=project(pt.x,rp.y,pt.z+rp.z); ribPts.push(proj); if(proj.depth>maxDepth)maxDepth=proj.depth; }
+    ribs.push({station:pt,points:ribPts,depth:maxDepth});
+  }
+  let sortedRibs=[...ribs].sort((a,b)=>a.depth-b.depth);
+
+  let ySamples=16, yGrid=[];
+  for (let yi=0; yi<=ySamples; yi++) yGrid.push(yi/ySamples*height);
+  let sampledRibs=[];
+  for (let rib of ribs) {
+    let xsData=bedXSections.find(xs=>xs.x===rib.station.x), ribPts=[...xsData.points].sort((a,b)=>a.y-b.y), samples=[];
+    for (let sy of yGrid) {
+      let zAbs=rib.station.z;
+      if(sy<=ribPts[0].y) zAbs+=ribPts[0].z;
+      else if(sy>=ribPts[ribPts.length-1].y) zAbs+=ribPts[ribPts.length-1].z;
+      else for(let k=0;k<ribPts.length-1;k++) if(ribPts[k].y<=sy&&sy<=ribPts[k+1].y){let t=(sy-ribPts[k].y)/(ribPts[k+1].y-ribPts[k].y);zAbs+=ribPts[k].z+t*(ribPts[k+1].z-ribPts[k].z);break;}
+      samples.push(project(rib.station.x,sy,zAbs));
+    }
+    sampledRibs.push({station:rib.station,samples,depth:rib.depth});
+  }
+  sampledRibs.sort((a,b)=>a.depth-b.depth);
+  let sampledByX=[...sampledRibs].sort((a,b)=>a.station.x-b.station.x);
+  for (let ri=0; ri<sampledByX.length-1; ri++) {
+    let rA=sampledByX[ri], rB=sampledByX[ri+1], avgDepth=(rA.depth+rB.depth)/2;
+    ctx.strokeStyle=`rgba(255,200,130,${0.08+avgDepth*0.14})`; ctx.lineWidth=0.6;
+    for (let si=0; si<rA.samples.length; si++) { ctx.beginPath(); ctx.moveTo(rA.samples[si].x,rA.samples[si].y); ctx.lineTo(rB.samples[si].x,rB.samples[si].y); ctx.stroke(); }
+  }
+
+  let spinePts=[];
+  for (let pt of sortedPts) spinePts.push({...project(pt.x,height/2,pt.z),station:pt});
+  for (let k=0; k<spinePts.length-1; k++) {
+    let pA=spinePts[k],pB=spinePts[k+1],d=(pA.depth+pB.depth)/2;
+    ctx.strokeStyle=`rgba(255,180,60,${0.5+d*0.4})`; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(pA.x,pA.y); ctx.lineTo(pB.x,pB.y); ctx.stroke();
+  }
+
+  for (let rib of sortedRibs) {
+    let d=rib.depth, spineXY=project(rib.station.x,height/2,rib.station.z);
+    ctx.strokeStyle=`rgba(255,200,100,${0.35+d*0.45})`; ctx.lineWidth=1.2;
+    ctx.beginPath();
+    for (let pi=0; pi<rib.points.length; pi++) { if(pi===0)ctx.moveTo(rib.points[pi].x,rib.points[pi].y); else ctx.lineTo(rib.points[pi].x,rib.points[pi].y); }
+    ctx.stroke();
+    ctx.fillStyle=`rgba(255,200,100,${0.4+d*0.4})`; ctx.beginPath(); ctx.arc(spineXY.x,spineXY.y,2.5,0,PI*2); ctx.fill();
+  }
+
+  for (let pt of sortedPts) {
+    if (bedXSections.some(xs=>xs.x===pt.x&&xs.points.length>=2)) continue;
+    let p=project(pt.x,height/2,pt.z);
+    ctx.fillStyle=`rgba(255,180,60,${0.25+p.depth*0.4})`; ctx.beginPath(); ctx.arc(p.x,p.y,2,0,PI*2); ctx.fill();
+  }
+  ctx.strokeStyle='rgba(255,200,100,0.2)'; ctx.lineWidth=1; ctx.strokeRect(1,1,TW-2,TH-2);
+}
+
+function updateHUD() {
+  let fmt=(n)=>n.toFixed(1);
+  document.getElementById('modelyear').textContent = modelYears.toFixed(1);
+  document.getElementById('tlyear').textContent    = timelineLoopTime().toFixed(1);
+  document.getElementById('tldur').textContent     = timelineDuration.toFixed(0);
+  document.getElementById('simtime').textContent=fmt(simTime);
+  document.getElementById('ro-hb').textContent     = breakHb > 0 ? breakHb.toFixed(2) : '–';
+  document.getElementById('ro-db').textContent     = breakDepth > 0 ? breakDepth.toFixed(2) : '–';
+  document.getElementById('ro-er').textContent    = lastMaxErosion.toFixed(2);
+  document.getElementById('ro-ac').textContent    = lastMaxAccretion.toFixed(2);
+  document.getElementById('ro-storm').textContent = stormNow.toFixed(2);
+  document.getElementById('ro-qpk').textContent  = qPeak.toFixed(4);
+  document.getElementById('ro-qnet').textContent = qMean.toFixed(4);
+  {
+    const st = longshoreStats();
+    document.getElementById('ro-ls').textContent =
+      (st.min < -0.005 ? 'erosion ' + st.min.toFixed(2) + ' m' : 'no erosion') +
+      ' · ' + (st.max > 0.005 ? 'accretion ' + st.max.toFixed(2) + ' m' : 'no accretion');
+  }
+  document.getElementById('ro-bar').textContent   = barDistanceM > 0 ? barDistanceM.toFixed(0) : '–';
+  document.getElementById('ro-runup').textContent  = runupR2.toFixed(2);
+  document.getElementById('ro-xi').textContent     = iribarren.toFixed(2);
+  document.getElementById('ro-zone').textContent   =
+    (iribarren < 0.5 ? 'spilling' : iribarren < 1.5 ? 'plunging' : 'surging') +
+    ' · ' + breakCount + ' breaking cells';
+  document.getElementById('mobile').textContent=particles.length;
+  document.getElementById('deposited').textContent=deposited.length;
+  document.getElementById('obstacles').textContent=obstacles.length;
+  document.getElementById('shape').textContent=ghostType;
+  document.getElementById('rot').textContent=fmt(ghostRotation%360);
+  document.getElementById('paused').textContent=paused?(bedMode?'🖉 BED MODE ('+bedPoints.length+' pts)':'⏸ PAUSED'):'';
+  document.getElementById('help').style.opacity=showHelp?'1':'0';
+}
+
+// ─────────────────────────────────────────────
+// P5.JS LIFECYCLE
+// ─────────────────────────────────────────────
+function setup() {
+  let cw = windowWidth - 270;
+  let ch = windowHeight;
+  let canvas = createCanvas(cw, ch);
+  pixelDensity(1);
+
+  cellW = width / (NX + 2);
+  cellH = height / (NY + 2);
+
+  u = new Float32Array(SIZE); v = new Float32Array(SIZE);
+  uPrev = new Float32Array(SIZE); vPrev = new Float32Array(SIZE);
+  solid = new Uint8Array(SIZE); p = new Float32Array(SIZE); divArr = new Float32Array(SIZE);
+
+  depoBuffer = createGraphics(width, height);
+  depoBuffer.background(0, 0);
+
+  trailBuffer = createGraphics(width, height);
+  trailBuffer.background(0, 0);
+
+  bedSurface = createGraphics(width, height);
+  bedSurface.background(0, 0);
+  GW = Math.ceil(width / DEPO_CELL) + 1;
+  GH = Math.ceil(height / DEPO_CELL) + 1;
+  depoGrid = new Float32Array(GW * GH); userBedGrid = new Float32Array(GW * GH);
+  morphGrid = new Float32Array(GW * GH);
+  longGrid  = new Float32Array(GW * GH);
+  rebuildUserBedGrid();          // seed the coastal profile into the cached bed grid
+  updateBedBuffer();
+
+  bedThumb = document.getElementById('bed-thumb').getContext('2d');
+  updateBedThumb();
+
+  let thumbCanvas = document.getElementById('bed-thumb');
+  thumbCanvas.addEventListener('mousedown', function(e) {
+    thumbDragging = true; thumbDragLast = { x: e.clientX, y: e.clientY }; e.stopPropagation();
+  });
+  window.addEventListener('mousemove', function(e) {
+    if (!thumbDragging) return;
+    let dx = e.clientX - thumbDragLast.x, dy = e.clientY - thumbDragLast.y;
+    thumbAngleX = (thumbAngleX + dx * 0.5) % 360;
+    thumbAngleY = max(5, min(85, thumbAngleY - dy * 0.5));
+    thumbDragLast = { x: e.clientX, y: e.clientY };
+    updateBedThumb();
+  });
+  window.addEventListener('mouseup', function() { thumbDragging = false; });
+
+  document.getElementById('z-scale').addEventListener('input', function() {
+    updateBedThumb();
+    document.getElementById('z-scale-val').textContent = (parseInt(this.value)/100).toFixed(2);
+  });
+
+  // ---- Coastal conditions
+  const CP = {
+    hs: 'c-hs', tp: 'c-tp', dir: 'c-dir', spread: 'c-spread',
+    wl: 'c-wl', slr: 'c-slr', d50: 'c-d50', slope: 'c-slope',
+  };
+  function readCoastal() {
+    const g = id => parseFloat(document.getElementById(id).value);
+    conditions.Hs        = g(CP.hs);
+    conditions.Tp        = g(CP.tp);
+    conditions.dirDeg    = g(CP.dir);
+    conditions.spreadDeg = g(CP.spread);
+    conditions.waterLevel = g(CP.wl) + g(CP.slr);
+    conditions.d50       = g(CP.d50);
+    conditions.slope     = g(CP.slope);
+    document.getElementById('c-hs-val').textContent    = conditions.Hs.toFixed(2);
+    document.getElementById('c-tp-val').textContent    = conditions.Tp.toFixed(1);
+    document.getElementById('c-dir-val').textContent   = conditions.dirDeg.toFixed(0);
+    document.getElementById('c-spread-val').textContent= conditions.spreadDeg.toFixed(0);
+    document.getElementById('c-wl-val').textContent    = g(CP.wl).toFixed(2);
+    document.getElementById('c-slr-val').textContent   = g(CP.slr).toFixed(2);
+    document.getElementById('c-d50-val').textContent   = conditions.d50.toFixed(2);
+    document.getElementById('c-slope-val').textContent = conditions.slope.toFixed(3);
+  }
+  function writeCoastal(c) {
+    document.getElementById('c-hs').value    = c.Hs;
+    document.getElementById('c-tp').value    = c.Tp;
+    document.getElementById('c-dir').value   = c.dirDeg;
+    document.getElementById('c-spread').value= c.spreadDeg;
+    document.getElementById('c-wl').value    = c.waterLevel;
+    document.getElementById('c-slr').value   = c.slr || 0;
+    document.getElementById('c-d50').value   = c.d50;
+    document.getElementById('c-slope').value = c.slope;
+    readCoastal();
+  }
+  const PRESETS = {
+    calm:     { Hs: 0.6, Tp: 6.0, dirDeg: 8,  spreadDeg: 12, waterLevel: 0.2, slr: 0, d50: 0.30, slope: 0.020 },
+    storm:    { Hs: 3.4, Tp: 12.0, dirDeg: -28, spreadDeg: 18, waterLevel: 0.8, slr: 0, d50: 0.30, slope: 0.020 },
+    recovery: { Hs: 0.9, Tp: 9.0, dirDeg: 4,  spreadDeg: 20, waterLevel: 0.3, slr: 0, d50: 0.30, slope: 0.020 },
+    slr:      { Hs: 0.6, Tp: 6.0, dirDeg: 8,  spreadDeg: 12, waterLevel: 0.2, slr: 0.9, d50: 0.30, slope: 0.020 },
+  };
+  ['c-hs','c-tp','c-dir','c-spread','c-wl','c-slr','c-d50','c-slope'].forEach(id => {
+    document.getElementById(id).addEventListener('input', function() {
+      document.getElementById('coastal-preset').value = 'custom';
+      readCoastal();
+    });
+  });
+  document.getElementById('coastal-preset').addEventListener('change', function() {
+    const p = PRESETS[this.value];
+    if (p) writeCoastal(p);
+  });
+  document.getElementById('reset-coastal').addEventListener('click', function() {
+    document.getElementById('coastal-preset').value = 'custom';
+    writeCoastal({ Hs: 1.2, Tp: 8.0, dirDeg: 0, spreadDeg: 0, waterLevel: 0, slr: 0, d50: 0.30, slope: 0.020 });
+  });
+  readCoastal();
+
+  // ---- Morphology
+  document.getElementById('m-rate').addEventListener('input', function(){
+    modelDaysPerSec = parseFloat(this.value);
+    document.getElementById('mrate-val').textContent = modelDaysPerSec.toFixed(1);
+  });
+  document.getElementById('m-relax').addEventListener('input', function(){
+    relaxDays = parseFloat(this.value);
+    document.getElementById('relax-val').textContent = relaxDays.toFixed(0);
+  });
+  document.getElementById('m-long').addEventListener('input', function(){
+    longshoreGain = parseFloat(this.value);
+    document.getElementById('ls-val').textContent = longshoreGain.toFixed(3);
+  });
+  document.getElementById('xb-dur').addEventListener('input', function(){
+    xbHours = parseFloat(this.value);
+    document.getElementById('xb-dur-val').textContent = xbHours.toFixed(0) + ' h';
+  });
+  document.getElementById('xb-mf').addEventListener('input', function(){
+    xbMorfac = parseFloat(this.value);
+    document.getElementById('xb-mf-val').textContent = xbMorfac.toFixed(0);
+  });
+  document.getElementById('export-xb').addEventListener('click', function(){ exportXBeach(); });
+  document.getElementById('reset-morph').addEventListener('click', function(){ resetMorphology(); });
+
+  // Physics sliders
+  document.getElementById('inflow').addEventListener('input', function(){inflowVel=parseFloat(this.value);document.getElementById('inflow-val').textContent=inflowVel.toFixed(1);});
+  document.getElementById('settle-thresh').addEventListener('input', function(){settleThresh=parseFloat(this.value);document.getElementById('settle-thresh-val').textContent=settleThresh.toFixed(2);});
+  document.getElementById('settle-prob').addEventListener('input', function(){settleProb=parseFloat(this.value);document.getElementById('settle-prob-val').textContent=settleProb.toFixed(3);});
+  document.getElementById('erosion-thresh').addEventListener('input', function(){erosionThresh=parseFloat(this.value);document.getElementById('erosion-thresh-val').textContent=erosionThresh.toFixed(2);});
+  document.getElementById('erosion-prob').addEventListener('input', function(){erosionProb=parseFloat(this.value);document.getElementById('erosion-prob-val').textContent=erosionProb.toFixed(3);});
+
+  // Render sliders
+  document.getElementById('trail-fade').addEventListener('input', function(){trailFade=parseInt(this.value);document.getElementById('trail-fade-val').textContent=trailFade;});
+  document.getElementById('particle-size').addEventListener('input', function(){particleSize=parseFloat(this.value);document.getElementById('particle-size-val').textContent=particleSize;});
+  document.getElementById('slow-color').addEventListener('input', function(){slowColor=this.value;});
+  document.getElementById('fast-color').addEventListener('input', function(){fastColor=this.value;});
+  document.getElementById('color-thresh').addEventListener('input', function(){colorThresh=parseFloat(this.value);document.getElementById('color-thresh-val').textContent=colorThresh.toFixed(2);});
+  document.getElementById('flow-scale').addEventListener('input', function(){flowScale=parseInt(this.value);document.getElementById('flow-scale-val').textContent=flowScale;});
+  document.getElementById('flow-dens').addEventListener('input', function(){flowDensity=parseInt(this.value);document.getElementById('flow-dens-val').textContent=flowDensity;});
+  document.getElementById('flow-opacity').addEventListener('input', function(){flowOpacity=parseInt(this.value);document.getElementById('flow-opacity-val').textContent=flowOpacity;});
+  document.getElementById('particle-count').addEventListener('input', function(){particleCount=parseInt(this.value);document.getElementById('particle-count-val').textContent=particleCount;while(particles.length+deposited.length<particleCount)particles.push(spawnParticle());});
+  document.getElementById('depo-size').addEventListener('input', function(){ depoSize=parseFloat(this.value); document.getElementById('depo-size-val').textContent=depoSize; redrawDepoBuffer(); });
+  document.getElementById('depo-recent').addEventListener('input', function(){ depoRecentColor=this.value; redrawDepoBuffer(); });
+  document.getElementById('depo-oldest').addEventListener('input', function(){ depoOldestColor=this.value; redrawDepoBuffer(); });
+
+  // Toggles
+  function updateToggles(){
+    document.getElementById('toggle-grid').className=showGrid?'tg-on':'tg-off';
+    document.getElementById('toggle-flow').className=showFlow?'tg-on':'tg-off';
+    document.getElementById('toggle-bed').className=bedMode?'tg-on':'tg-off';
+    document.getElementById('toggle-pause').className=paused?'tg-on':'tg-off';
+    document.getElementById('toggle-elev').className=showElev?'tg-on':'tg-off';
+  }
+  document.getElementById('toggle-grid').addEventListener('click',function(){showGrid=!showGrid;updateToggles();});
+  document.getElementById('toggle-flow').addEventListener('click',function(){showFlow=!showFlow;updateToggles();});
+  document.getElementById('toggle-bed').addEventListener('click',function(){bedMode=!bedMode;if(bedMode)paused=true;else paused=false;updateToggles();});
+  document.getElementById('toggle-pause').addEventListener('click',function(){paused=!paused;updateToggles();});
+  document.getElementById('toggle-elev').addEventListener('click',function(){showElev=!showElev;updateToggles();});
+  updateToggles();
+
+  // Reset buttons
+  document.getElementById('reset-physics').addEventListener('click',function(){
+    inflowVel=2.5;settleThresh=0.20;erosionThresh=1.0;settleProb=0.012;erosionProb=0.02;
+    document.getElementById('inflow').value=2.5;document.getElementById('inflow-val').textContent='2.5';
+    document.getElementById('settle-thresh').value=0.20;document.getElementById('settle-thresh-val').textContent='0.20';
+    document.getElementById('settle-prob').value=0.012;document.getElementById('settle-prob-val').textContent='0.012';
+    document.getElementById('erosion-thresh').value=1.0;document.getElementById('erosion-thresh-val').textContent='1.00';
+    document.getElementById('erosion-prob').value=0.02;document.getElementById('erosion-prob-val').textContent='0.02';
+  });
+  document.getElementById('reset-render').addEventListener('click',function(){
+    trailFade=7;particleSize=2;slowColor='#ff44aa';fastColor='#ddeeff';
+    colorThresh=0.5;flowScale=25;flowDensity=8;flowOpacity=140;
+    depoSize=6;depoRecentColor='#ffcc55';depoOldestColor='#6b4f3a';
+    document.getElementById('depo-size').value=6;document.getElementById('depo-size-val').textContent='6';
+    document.getElementById('depo-recent').value='#ffcc55';document.getElementById('depo-oldest').value='#6b4f3a';
+    redrawDepoBuffer();
+    document.getElementById('trail-fade').value=7;document.getElementById('trail-fade-val').textContent='7';
+    document.getElementById('particle-size').value=2;document.getElementById('particle-size-val').textContent='2';
+    document.getElementById('slow-color').value='#ff44aa';document.getElementById('fast-color').value='#ddeeff';
+    document.getElementById('color-thresh').value=0.5;document.getElementById('color-thresh-val').textContent='0.50';
+    document.getElementById('flow-scale').value=25;document.getElementById('flow-scale-val').textContent='25';
+    document.getElementById('flow-dens').value=8;document.getElementById('flow-dens-val').textContent='8';
+    document.getElementById('flow-opacity').value=140;document.getElementById('flow-opacity-val').textContent='140';
+  });
+
+  addObstacle(width*0.2, height*0.35, 'circle', 0);
+  addObstacle(width*0.35, height*0.6, 'rect', 30);
+  addObstacle(width*0.55, height*0.4, 'rect', -15);
+  // Default obstacles: spread across the loop so the timeline is meaningful out of
+  // the box; drag/resize them on the timeline bar to re-choreograph.
+  obstacles[0].clips = [{ start: 0, dur: timelineDuration / 3 }];
+  obstacles[1].clips = [{ start: timelineDuration / 3, dur: timelineDuration / 3 }];
+  obstacles[2].clips = [{ start: 2 * timelineDuration / 3, dur: timelineDuration / 3 }];
+  ghostRotation = 30;
+
+  // Timeline controls
+  document.getElementById('toggle-timeline').addEventListener('click', function(){ timelineEnabled=!timelineEnabled; updateTimelineVisibility(); });
+  document.getElementById('timeline-dur').addEventListener('input', function(){ timelineDuration=parseFloat(this.value); document.getElementById('timeline-dur-val').textContent=fmtDur(timelineDuration); drawTimeline(); });
+  document.getElementById('toggle-pingpong').addEventListener('click', function(){ timelinePingPong=!timelinePingPong; this.textContent = timelinePingPong ? 'pingpong' : 'loop'; drawTimeline(); });
+  let tlc = document.getElementById('timeline-canvas');
+  tlc.addEventListener('mousedown', timelineMouseDown);
+  window.addEventListener('mousemove', timelineMouseMove);
+  window.addEventListener('mouseup', timelineMouseUp);
+  updateTimelineVisibility();
+
+  for (let k=0; k<80; k++) { simTime+=DT; buildSolidMask(); waveFieldStep(); }
+  initParticles();
+}
+
+function draw() {
+  if (!paused) {
+    simTime += DT;
+    // waveFieldStep() rasterizes obstacles itself; calling it here too ran the mask twice
+    // per frame for nothing.
+    waveFieldStep();
+    const _dtF = (typeof deltaTime === 'number' ? Math.min(deltaTime, 60) : 16.7) / 1000;
+    const dtModel = _dtF * modelDaysPerSec * 86400;      // model seconds this frame
+    modelYears += dtModel / (365 * 86400);
+    computeBarDistance();
+    morphologyStep(dtModel);
+    computeLongshore();
+    applyLongshore(dtModel);
+    applyNourishment(dtModel);
+    if (morphEnabled && (frameCount % 8 === 0)) updateBedBuffer();
+    updateParticles();
+    drawDeposition();
+    bedRenderAcc += DT;
+    if (bedRenderAcc >= 0.5) { bedRenderAcc = 0; updateBedBuffer(); redrawDepoBuffer(); }
+  }
+
+  background(10, 10, 20);
+  image(depoBuffer, 0, 0);
+
+  // Bed surface — behind trails so trails paint over it
+  if (!bedMode) image(bedSurface, 0, 0);
+
+  if (!bedMode) {
+    trailBuffer.push(); trailBuffer.noStroke(); trailBuffer.fill(10,10,20,trailFade); trailBuffer.rect(0,0,width,height); trailBuffer.pop();
+    drawParticlesToBuffer();
+    image(trailBuffer, 0, 0);
+  } else {
+    trailBuffer.clear();
+  }
+
+  drawFlowField();
+  drawSpotElevations();
+  drawParticles();
+  drawObstacles();
+  drawBedProfile();
+  if (!bedMode) drawGhost();
+  if (timelineEnabled) drawTimeline();
+
+  if (showGrid) {
+    stroke(30,30,60,80); strokeWeight(0.5);
+    for (let i=0;i<=NX;i++){let x=i*cellW;line(x,0,x,height);}
+    for (let j=0;j<=NY;j++){let y=j*cellH;line(0,y,width,y);}
+    let ms=10; stroke(50,45,80,140); strokeWeight(1);
+    for (let i=0;i<=NX;i+=ms){let x=i*cellW;line(x,0,x,height);}
+    for (let j=0;j<=NY;j+=ms){let y=j*cellH;line(0,y,width,y);}
+  }
+
+  updateHUD();
+}
+
+function windowResized() {
+  let cw = windowWidth - 270;
+  let ch = windowHeight;
+  resizeCanvas(cw, ch);
+  cellW = width/NX; cellH = height/NY;
+
+  let oldDepo = depoBuffer; depoBuffer = createGraphics(width,height);
+  if (oldDepo) { depoBuffer.image(oldDepo,0,0,width,height); oldDepo.remove(); }
+
+  let oldTrail = trailBuffer; trailBuffer = createGraphics(width,height); trailBuffer.background(0,0);
+  if (oldTrail) oldTrail.remove();
+
+  let oldBed = bedSurface; bedSurface = createGraphics(width,height); bedSurface.background(0,0);
+  if (oldBed) oldBed.remove();
+  updateBedBuffer(); updateBedThumb();
+}
+
+// ─────────────────────────────────────────────
+// SHAPE GEOMETRY + RESIZE HANDLES
+// ─────────────────────────────────────────────
+function obW(ob) { return (ob.w != null) ? ob.w : ob.size; }
+function obH(ob) { return (ob.h != null) ? ob.h : ob.size; }
+
+function pointInPoly(px, py, pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    let xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+    if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+
+function distToSeg(px, py, ax, ay, bx, by) {
+  let dx = bx - ax, dy = by - ay, len2 = dx*dx + dy*dy;
+  let t = len2 ? constrain(((px-ax)*dx + (py-ay)*dy) / len2, 0, 1) : 0;
+  return dist(px, py, ax + t*dx, ay + t*dy);
+}
+
+function polyCentroid(pts) {
+  let cx = 0, cy = 0;
+  for (let p of pts) { cx += p.x; cy += p.y; }
+  return { x: cx / pts.length, y: cy / pts.length };
+}
+
+function polyToLocal(ob, wx, wy) {
+  let a = -ob.rotation * PI / 180, cosA = cos(a), sinA = sin(a);
+  let dx = wx - ob.x, dy = wy - ob.y;
+  return { x: dx * cosA - dy * sinA, y: dx * sinA + dy * cosA };
+}
+
+function hitPolyVertex(ob, mx, my) {
+  let lp = polyToLocal(ob, mx, my);
+  for (let i = 0; i < ob.points.length; i++) {
+    if (dist(lp.x, lp.y, ob.points[i].x, ob.points[i].y) < 9) return i;
+  }
+  return -1;
+}
+
+function getResizeHandle(idx, mx, my) {
+  let ob = obstacles[idx];
+  if (ob.type === 'poly') return null;
+  let th = ob.rotation * PI / 180, cosT = cos(th), sinT = sin(th);
+  let dx = mx - ob.x, dy = my - ob.y;
+  let lx = dx * cosT + dy * sinT, ly = -dx * sinT + dy * cosT;
+  let hw = obW(ob)/2, hh = obH(ob)/2, GRAB = 8;
+  let handles = (ob.type === 'circle')
+    ? [['e', hw, 0], ['s', 0, hh], ['w', -hw, 0], ['n', 0, -hh]]
+    : [['nw',-hw,-hh],['n',0,-hh],['ne',hw,-hh],['e',hw,0],['se',hw,hh],['s',0,hh],['sw',-hw,hh],['w',-hw,0]];
+  for (let h of handles) if (abs(lx - h[1]) < GRAB && abs(ly - h[2]) < GRAB) return h[0];
+  return null;
+}
+
+function resizeObstacle(rd, mx, my) {
+  let ob = obstacles[rd.idx];
+  if (ob.type === 'circle') {
+    let r = max(3, dist(mx, my, ob.x, ob.y));
+    ob.w = r * 2; ob.h = r * 2;
+    return;
+  }
+  let th = ob.rotation * PI / 180, cosT = cos(th), sinT = sin(th);
+  let dx = mx - ob.x, dy = my - ob.y;
+  let lx = dx * cosT + dy * sinT, ly = -dx * sinT + dy * cosT;
+  let hw = obW(ob)/2, hh = obH(ob)/2, MIN = 3;
+  let ax = 0, ay = 0, fx = 0, fy = 0;
+  switch (rd.handle) {
+    case 'e':  ax = -1;        fx = 1; break;
+    case 'w':  ax = 1;         fx = 1; break;
+    case 's':  ay = -1;        fy = 1; break;
+    case 'n':  ay = 1;         fy = 1; break;
+    case 'ne': ax = -1; ay = 1;  fx = 1; fy = 1; break;
+    case 'nw': ax = 1;  ay = 1;  fx = 1; fy = 1; break;
+    case 'se': ax = -1; ay = -1; fx = 1; fy = 1; break;
+    case 'sw': ax = 1;  ay = -1; fx = 1; fy = 1; break;
+  }
+  let apx = ax * hw, apy = ay * hh, cxl = 0, cyl = 0;
+  if (fx) { let nw = max(MIN, abs(lx - apx) / 2); cxl = apx + (lx >= apx ? 1 : -1) * nw; ob.w = nw * 2; }
+  if (fy) { let nh = max(MIN, abs(ly - apy) / 2); cyl = apy + (ly >= apy ? 1 : -1) * nh; ob.h = nh * 2; }
+  ob.x += cxl * cosT - cyl * sinT;
+  ob.y += cxl * sinT + cyl * cosT;
+}
+
+function drawPolyPreview() {
+  if (polyPoints.length === 0) return;
+  if (polyPoints.length === 1) { noStroke(); fill(255,200,100); ellipse(polyPoints[0].x, polyPoints[0].y, 8, 8); return; }
+  noFill(); stroke(255,255,255,170); strokeWeight(1.5);
+  beginShape();
+  for (let p of polyPoints) vertex(p.x, p.y);
+  endShape();
+  stroke(255,255,255,90); strokeWeight(1);
+  line(polyPoints[polyPoints.length-1].x, polyPoints[polyPoints.length-1].y, mouseX, mouseY);
+  let f = polyPoints[0];
+  let closing = polyPoints.length >= 3 && dist(mouseX, mouseY, f.x, f.y) < 12;
+  noStroke(); fill(255,200,100);
+  ellipse(f.x, f.y, closing ? 12 : 8, closing ? 12 : 8);
+  if (closing) { noFill(); stroke(255,200,100,200); strokeWeight(1.5); ellipse(f.x, f.y, 16, 16); }
+}
+
+// ─────────────────────────────────────────────
+// INTERACTION
+// ─────────────────────────────────────────────
+function hitTestObstacle(mx, my) {
+  for (let i=obstacles.length-1;i>=0;i--) {
+    let ob=obstacles[i];
+    if (!isObstacleActive(ob)) continue;
+    if (ob.type==='poly') {
+      let lp = polyToLocal(ob, mx, my);
+      if (pointInPoly(lp.x, lp.y, ob.points)) return i;
+      for (let k=0;k<ob.points.length;k++) {
+        let a=ob.points[k], b=ob.points[(k+1)%ob.points.length];
+        if (distToSeg(lp.x, lp.y, a.x, a.y, b.x, b.y) < 6) return i;
+      }
+      continue;
+    }
+    let dx=mx-ob.x, dy=my-ob.y;
+    if (ob.type==='circle') { if (dx*dx+dy*dy<=(obW(ob)/2+6)*(obW(ob)/2+6)) return i; }
+    else {
+      let cosA=cos(-ob.rotation*PI/180), sinA=sin(-ob.rotation*PI/180);
+      let rx=dx*cosA-dy*sinA, ry=dx*sinA+dy*cosA;
+      if (abs(rx)<=obW(ob)/2+6&&abs(ry)<=obH(ob)/2+6) return i;
+    }
+  }
+  return -1;
+}
+
+function addObstacle(x, y, type, rot) {
+  if (type === 'nourish') {
+    obstacles.push({ type: 'rect', kind: 'nourish', x, y, w: ghostSize, h: ghostSize * 0.6,
+                     rotation: 0, clips: [{ start: timelineLoopTime(), dur: DEFAULT_OBJ_DUR }] });
+    selectedIdx = obstacles.length - 1;
+    return;
+  }
+  obstacles.push({ type, x, y, w: ghostSize, h: ghostSize, rotation: rot||0, clips: [{ start: 0, dur: timelineDuration }] });
+}
+
+function addPolyObstacle(pts) {
+  let c = polyCentroid(pts);
+  obstacles.push({ type: 'poly', x: c.x, y: c.y, rotation: 0, points: pts.map(p => ({ x: p.x - c.x, y: p.y - c.y })), clips: [{ start: 0, dur: timelineDuration }] });
+}
+
+function deleteObstacle(idx) { if (idx>=0&&idx<obstacles.length) obstacles.splice(idx,1); }
+
+function mousePressed(event) {
+  if (event && event.target) { let t=event.target; if (t.closest('#sidebar')||t.tagName==='BUTTON'||t.id==='bed-thumb'||t.id==='timeline-canvas') return; }
+  if (mouseX<0||mouseX>width||mouseY<0||mouseY>height) return;
+
+  if (bedMode) {
+    let stripH=160, stripY=height-stripH, bedMaxZ=160;
+    editingLongPt=-1; editingXSStation=null;
+
+    if (mouseY >= stripY) {
+      for (let i=0;i<bedPoints.length;i++) {
+        let sx=bedPoints[i].x, sy=stripY+stripH-(bedPoints[i].z/bedMaxZ)*stripH;
+        if (dist(mouseX,mouseY,sx,sy)<10) { editingLongPt=i; return; }
+      }
+      let z=(stripY+stripH-mouseY)/stripH*bedMaxZ;
+      bedPoints.push({x:mouseX,z:max(0,z)}); bedPoints.sort((a,b)=>a.x-b.x);
+      updateBedBuffer(); updateBedThumb(); return;
+    }
+
+    let closestIdx=-1, closestDist=Infinity;
+    for (let i=0;i<bedPoints.length;i++) { let d=abs(mouseX-bedPoints[i].x); if(d<40&&d<closestDist){closestDist=d;closestIdx=i;} }
+    if (closestIdx>=0) {
+      activeXSection=closestIdx;
+      let pt=bedPoints[closestIdx], xStripW=60, sx=pt.x-xStripW/2;
+      let xsData=bedXSections.find(xs=>xs.x===pt.x);
+      if (xsData&&xsData.points.length>0) {
+        for (let pi=0;pi<xsData.points.length;pi++) {
+          let rp=xsData.points[pi], absZ=pt.z+rp.z, vy=rp.y/height*stripY, vx=sx+xStripW-(absZ/bedMaxZ)*xStripW;
+          if (dist(mouseX,mouseY,vx,vy)<10) { editingXSStation={stationIdx:closestIdx,pointIdx:pi}; return; }
+        }
+      }
+      if (mouseX>=sx&&mouseX<=sx+xStripW&&mouseY<stripY) {
+        let y=mouseY/stripY*height, relX=(mouseX-sx)/xStripW, absZ=(1-relX)*bedMaxZ, z=max(0,absZ-pt.z);
+        let xsIdx=bedXSections.findIndex(xs=>xs.x===pt.x);
+        if (xsIdx<0) { bedXSections.push({x:pt.x,points:[]}); xsIdx=bedXSections.length-1; }
+        bedXSections[xsIdx].points.push({y:constrain(y,0,height),z}); bedXSections[xsIdx].points.sort((a,b)=>a.y-b.y);
+        updateBedBuffer(); updateBedThumb();
+      }
+    } else { activeXSection=-1; }
+    return;
+  }
+
+  if (selectedIdx >= 0) {
+    let h = getResizeHandle(selectedIdx, mouseX, mouseY);
+    if (h) { resizeDrag = { idx: selectedIdx, handle: h }; return; }
+    let sob = obstacles[selectedIdx];
+    if (sob.type === 'poly') {
+      let vi = hitPolyVertex(sob, mouseX, mouseY);
+      if (vi >= 0) { polyVertexDrag = { idx: selectedIdx, vi: vi }; return; }
+    }
+  }
+
+  let hit = hitTestObstacle(mouseX, mouseY);
+  if (hit>=0) { selectedIdx=hit; selectedClip=-1; ghostRotation=obstacles[hit].rotation; ghostType=obstacles[hit].type; dragging=true; dragOffX=obstacles[hit].x-mouseX; dragOffY=obstacles[hit].y-mouseY; return; }
+
+  if (ghostType === 'poly') {
+    if (polyPoints.length >= 3 && dist(mouseX, mouseY, polyPoints[0].x, polyPoints[0].y) < 12) {
+      addPolyObstacle(polyPoints); polyPoints = [];
+    } else {
+      polyPoints.push({ x: mouseX, y: mouseY });
+    }
+    return;
+  }
+  addObstacle(mouseX,mouseY,ghostType,ghostRotation);
+}
+
+function mouseDragged(event) {
+  if (event&&event.target) { let t=event.target; if(t.closest('#sidebar')||t.id==='bed-thumb'||t.id==='timeline-canvas') return; }
+  if (bedMode) {
+    let stripH=160,stripY=height-stripH,bedMaxZ=160;
+    if (editingLongPt>=0&&editingLongPt<bedPoints.length) {
+      let z=(stripY+stripH-mouseY)/stripH*bedMaxZ; bedPoints[editingLongPt].z=max(0,z);
+      updateBedBuffer(); updateBedThumb(); return;
+    }
+    if (editingXSStation) {
+      let si=editingXSStation.stationIdx, pi=editingXSStation.pointIdx;
+      let xsData=bedXSections.find(xs=>xs.x===bedPoints[si].x);
+      if (xsData&&pi<xsData.points.length) {
+        let xStripW=60, sx=bedPoints[si].x-xStripW/2;
+        let relX=constrain((mouseX-sx)/xStripW,0,1), absZ=(1-relX)*bedMaxZ;
+        xsData.points[pi].z=max(0,absZ-bedPoints[si].z);
+        xsData.points[pi].y=constrain(mouseY/stripY*height,0,height);
+        updateBedBuffer(); updateBedThumb();
+      }
+      return;
+    }
+    return;
+  }
+  if (resizeDrag) { resizeObstacle(resizeDrag, mouseX, mouseY); return; }
+  if (polyVertexDrag) { let pv=obstacles[polyVertexDrag.idx]; let lp=polyToLocal(pv,mouseX,mouseY); pv.points[polyVertexDrag.vi]={x:lp.x,y:lp.y}; return; }
+  if (dragging&&selectedIdx>=0) { obstacles[selectedIdx].x=mouseX+dragOffX; obstacles[selectedIdx].y=mouseY+dragOffY; }
+}
+
+function mouseReleased() { dragging=false; resizeDrag=null; polyVertexDrag=null; editingLongPt=-1; editingXSStation=null; }
+
+function mouseWheel(event) {
+  if (event && event.target && event.target.id==='timeline-canvas') return true;
+  let delta=event.delta>0?5:-5;
+  ghostRotation=(ghostRotation+delta)%360; if(ghostRotation<0)ghostRotation+=360;
+  if (selectedIdx>=0) obstacles[selectedIdx].rotation=ghostRotation;
+  return false;
+}
+
+function keyPressed() {
+  if (key===' ') { paused=!paused; }
+  else if (key==='r'||key==='R') {
+    simTime=0; initParticles(); depoBuffer.clear(); trailBuffer.clear(); deposited=[];
+    if (depoGrid) depoGrid.fill(0);
+    bedSurface.clear(); updateBedBuffer();
+    // Restart preserves bed (bedPoints/bedXSections) and obstacle placement.
+    // isObstacleActive keeps obstacles on (timeline off) or re-sequences them from
+    // the top of the loop (timeline on) automatically.
+  }
+  else if (key==='f'||key==='F') { showFlow=!showFlow; }
+  else if (key==='g'||key==='G') { showGrid=!showGrid; }
+  else if (key==='h'||key==='H') { showHelp=!showHelp; }
+  else if (key==='1') { ghostType='circle'; polyPoints=[]; }
+  else if (key==='2') { ghostType='rect'; polyPoints=[]; }
+  else if (key==='3') { ghostType='poly'; }
+  else if (key==='4') { ghostType='nourish'; polyPoints=[]; }
+  else if (key==='[') { ghostSize=max(20,ghostSize-5); }
+  else if (key===']') { ghostSize=min(100,ghostSize+5); }
+  else if ((key==='Backspace'||key==='Delete')&&selectedIdx>=0&&selectedClip>=0) {
+    let ob = obstacles[selectedIdx];
+    if (ob && ob.clips && ob.clips.length > 0) { ob.clips.splice(selectedClip, 1); }
+    selectedClip = -1; selectedIdx = -1;
+    drawTimeline();
+  }
+  else if ((key==='Backspace'||key==='Delete')&&selectedIdx>=0) { deleteObstacle(selectedIdx); selectedIdx=-1; selectedClip=-1; }
+  else if (key==='Backspace'||key==='Delete') {
+    if (bedMode) {
+      if (activeXSection>=0) {
+        let xsData=bedXSections.find(xs=>xs.x===bedPoints[activeXSection].x);
+        if (xsData&&xsData.points.length>0) { xsData.points.pop(); if(xsData.points.length===0)bedXSections=bedXSections.filter(xs=>xs.x!==bedPoints[activeXSection].x); updateBedBuffer(); updateBedThumb(); return; }
+      }
+      if (bedPoints.length>0) { bedPoints.pop(); updateBedBuffer(); updateBedThumb(); }
+      return;
+    }
+  }
+  else if (key==='Escape') { selectedIdx=-1; dragging=false; resizeDrag=null; polyVertexDrag=null; polyPoints=[]; if(bedMode)bedMode=false; }
+  else if (key==='m'||key==='M') { bedMode=!bedMode; if(bedMode)paused=true; }
+  else if (key==='s'||key==='S') { saveCanvas('sediment-'+floor(simTime),'png'); }
+  return false;
+}
+
+// ─────────────────────────────────────────────
+// TIMELINE
+// ─────────────────────────────────────────────
+function fmtDur(y) {
+  return (y >= 1 ? Math.round(y) + ' yr' : Math.round(y * 12) + ' mo');
+}
+
+function niceTimeStep(T, W) {
+  let target = T / Math.max(1, Math.round(W / 90));
+  let steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+  for (let s of steps) if (s >= target) return s;
+  return 600;
+}
+
+function tlSegColor(idx) {
+  let hues = [38, 205, 340, 160, 260, 90, 300, 20];
+  return `hsla(${hues[idx % hues.length]}, 70%, 60%, 0.6)`;
+}
+
+const TL_HEADER_H = 16;   // timeline header height (time labels)
+const TL_ROW_H = 22;      // height of one obstacle track
+const TL_GUTTER = 26;     // left label gutter (track numbers)
+
+function drawTimeline() {
+  let bar = document.getElementById('timeline-bar');
+  let c = document.getElementById('timeline-canvas');
+  if (!bar || !c) return;
+  let T = timelineDuration;
+  let W = bar.clientWidth;
+  if (W <= 0) return;
+  let H = TL_HEADER_H + obstacles.length * TL_ROW_H + 4;
+  bar.style.height = H + 'px';
+  c.style.width = W + 'px';
+  c.style.height = H + 'px';
+  if (c.width !== W) c.width = W;
+  if (c.height !== H) c.height = H;
+  let ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  let t2x = (t) => TL_GUTTER + (t / T) * (W - TL_GUTTER);
+
+  // gutter (track labels) + separator
+  ctx.fillStyle = 'rgba(255,255,255,0.03)';
+  ctx.fillRect(0, 0, TL_GUTTER, H);
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(TL_GUTTER, 0); ctx.lineTo(TL_GUTTER, H); ctx.stroke();
+
+  // gridlines + time labels (header band)
+  let step = niceTimeStep(T, W - TL_GUTTER);
+  ctx.font = '8px Courier New';
+  for (let t = 0; t <= T; t += step) {
+    let x = t2x(t);
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillText(fmtDur(t), Math.min(x + 3, W - 30), 9);
+  }
+
+  // one track (row) per obstacle, with one or more clips per track
+  for (let i = 0; i < obstacles.length; i++) {
+    let ob = obstacles[i];
+    let rowY = TL_HEADER_H + i * TL_ROW_H;
+    let clips = ob.clips || [];
+    // alternating row tint + separator
+    ctx.fillStyle = (i % 2) ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.045)';
+    ctx.fillRect(TL_GUTTER, rowY, W - TL_GUTTER, TL_ROW_H);
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(TL_GUTTER, rowY + TL_ROW_H - 1, W - TL_GUTTER, 1);
+    // track number label (in the gutter)
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillText(String(i + 1), 8, rowY + TL_ROW_H - 8);
+    // clips
+    let segY = rowY + 3, segH = TL_ROW_H - 6;
+    for (let ci = 0; ci < clips.length; ci++) {
+      let c = clips[ci];
+      let start = ((c.start || 0) % T + T) % T;
+      let dur = (c.dur == null) ? DEFAULT_OBJ_DUR : c.dur;
+      let sel = (i === selectedIdx && ci === selectedClip);
+      ctx.lineWidth = sel ? 2 : 1;
+      if (dur >= T) {
+        ctx.fillStyle = 'rgba(255,200,100,0.18)';
+        ctx.fillRect(TL_GUTTER, segY, W - TL_GUTTER, segH);
+        ctx.strokeStyle = sel ? 'rgba(255,255,255,0.95)' : 'rgba(255,200,100,0.25)';
+        ctx.strokeRect(TL_GUTTER, segY, W - TL_GUTTER, segH);
+      } else {
+        let x0 = t2x(start), x1 = t2x(start + dur);
+        ctx.fillStyle = tlSegColor(i);
+        ctx.strokeStyle = sel ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.3)';
+        if (x1 <= W) {
+          ctx.fillRect(x0, segY, x1 - x0, segH);
+          ctx.strokeRect(x0, segY, x1 - x0, segH);
+        } else {  // wraps around loop end
+          ctx.fillRect(x0, segY, W - x0, segH);
+          ctx.fillRect(TL_GUTTER, segY, x1 - W, segH);
+          ctx.strokeRect(x0, segY, W - x0, segH);
+          ctx.strokeRect(TL_GUTTER, segY, x1 - W, segH);
+        }
+      }
+    }
+  }
+
+  // playhead (spans all tracks)
+  let loopT = timelineLoopTime();
+  let px = t2x(loopT);
+  ctx.strokeStyle = 'rgba(255,120,80,0.95)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, H); ctx.stroke();
+}
+
+function timelineMouseDown(e) {
+  if (!timelineEnabled) return;
+  let c = e.currentTarget, rect = c.getBoundingClientRect();
+  let mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  let T = timelineDuration, W = rect.width, axisW = W - TL_GUTTER;
+  let row = Math.floor((my - TL_HEADER_H) / TL_ROW_H);
+  if (row < 0 || row >= obstacles.length) return;
+  let ob = obstacles[row];
+  let clips = ob.clips || [];
+  let t2x = (t) => TL_GUTTER + (t / T) * axisW;
+  let x2t = (x) => ((x - TL_GUTTER) / axisW) * T;
+  let edge = 6;
+  selectedIdx = row;
+
+  // gutter click = select obstacle only (no clip)
+  if (mx < TL_GUTTER) { selectedClip = -1; drawTimeline(); return; }
+
+  // hit-test clips (topmost first)
+  for (let ci = clips.length - 1; ci >= 0; ci--) {
+    let c = clips[ci];
+    let start = ((c.start || 0) % T + T) % T;
+    let dur = (c.dur == null) ? DEFAULT_OBJ_DUR : c.dur;
+    if (dur >= T) {
+      // full-loop clip: clicking materializes it into a finite clip centered here
+      let clickT = x2t(mx);
+      c.dur = DEFAULT_OBJ_DUR;
+      c.start = ((clickT - DEFAULT_OBJ_DUR / 2) % T + T) % T;
+      selectedClip = ci;
+      tlDrag = { mode: 'move', obstacleIdx: row, clipIdx: ci, grabX: mx, origStart: c.start, origDur: c.dur };
+      drawTimeline();
+      return;
+    }
+    let x0 = t2x(start), x1 = t2x(start + dur);
+    if (Math.abs(mx - x0) <= edge) { selectedClip = ci; tlDrag = { mode: 'resize-l', obstacleIdx: row, clipIdx: ci, grabX: mx, origStart: start, origDur: dur }; drawTimeline(); return; }
+    let x1e = (x1 > W) ? (x1 - W) : x1;
+    if (Math.abs(mx - x1e) <= edge) { selectedClip = ci; tlDrag = { mode: 'resize-r', obstacleIdx: row, clipIdx: ci, grabX: mx, origStart: start, origDur: dur }; drawTimeline(); return; }
+    let onBody = (x1 <= W) ? (mx >= x0 && mx <= x1) : (mx >= x0 || mx <= (x1 - W));
+    if (onBody) { selectedClip = ci; tlDrag = { mode: 'move', obstacleIdx: row, clipIdx: ci, grabX: mx, origStart: start, origDur: dur }; drawTimeline(); return; }
+  }
+
+  // empty area: begin a pending-create drag (a short click just deselects; a drag
+  // adds a new clip for this object spanning the dragged range)
+  selectedClip = -1;
+  tlDrag = { mode: 'create-pending', obstacleIdx: row, grabX: mx, startX: mx };
+  drawTimeline();
+}
+
+function timelineMouseMove(e) {
+  let c = document.getElementById('timeline-canvas');
+  let rect = c.getBoundingClientRect();
+  let mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  let T = timelineDuration, W = rect.width, axisW = W - TL_GUTTER;
+  let x2t = (x) => ((x - TL_GUTTER) / axisW) * T;
+
+  if (tlDrag) {
+    if (tlDrag.mode === 'create-pending') {
+      if (Math.abs(mx - tlDrag.startX) > 3) {
+        let ob = obstacles[tlDrag.obstacleIdx];
+        let clip = { start: x2t(Math.min(tlDrag.grabX, mx)), dur: 1 };
+        ob.clips.push(clip);
+        tlDrag.mode = 'create';
+        tlDrag.clipIdx = ob.clips.length - 1;
+        selectedIdx = tlDrag.obstacleIdx;
+        selectedClip = tlDrag.clipIdx;
+      } else {
+        return;   // not yet a drag
+      }
+    }
+    if (tlDrag.mode === 'create') {
+      let ob = obstacles[tlDrag.obstacleIdx];
+      let clip = ob.clips[tlDrag.clipIdx];
+      let ta = x2t(Math.min(tlDrag.grabX, mx));
+      let tb = x2t(Math.max(tlDrag.grabX, mx));
+      clip.start = ((ta % T) + T) % T;
+      clip.dur = Math.max(1, Math.min(T, tb - ta));
+      drawTimeline();
+      return;
+    }
+    // move / resize an existing clip
+    let dx = ((mx - tlDrag.grabX) / axisW) * T;
+    let ob = obstacles[tlDrag.obstacleIdx];
+    let clip = ob.clips[tlDrag.clipIdx];
+    if (tlDrag.mode === 'move') {
+      clip.start = ((tlDrag.origStart + dx) % T + T) % T;
+    } else if (tlDrag.mode === 'resize-r') {
+      let nd = Math.min(T, tlDrag.origDur + dx);
+      if (nd >= 1) clip.dur = nd;
+    } else if (tlDrag.mode === 'resize-l') {
+      let nd = Math.min(T, tlDrag.origDur - dx);
+      if (nd >= 1) { clip.dur = nd; clip.start = ((tlDrag.origStart + dx) % T + T) % T; }
+    }
+    drawTimeline();
+    return;
+  }
+
+  // hover: cursor feedback (resize edge / grab body / copy on empty track)
+  if (!timelineEnabled) return;
+  let row = Math.floor((my - TL_HEADER_H) / TL_ROW_H);
+  if (row < 0 || row >= obstacles.length || mx < TL_GUTTER) { c.style.cursor = 'default'; return; }
+  let ob = obstacles[row];
+  let clips = ob.clips || [];
+  let t2x = (t) => TL_GUTTER + (t / T) * axisW;
+  for (let ci = clips.length - 1; ci >= 0; ci--) {
+    let c = clips[ci];
+    let dur = (c.dur == null) ? DEFAULT_OBJ_DUR : c.dur;
+    if (dur >= T) continue;
+    let start = ((c.start || 0) % T + T) % T;
+    let x0 = t2x(start), x1 = t2x(start + dur);
+    let x1e = (x1 > W) ? (x1 - W) : x1;
+    if (Math.abs(mx - x0) <= 6 || Math.abs(mx - x1e) <= 6) { c.style.cursor = 'ew-resize'; return; }
+    let onBody = (x1 <= W) ? (mx >= x0 && mx <= x1) : (mx >= x0 || mx <= (x1 - W));
+    if (onBody) { c.style.cursor = 'grab'; return; }
+  }
+  c.style.cursor = 'copy';   // empty track: drag to add a clip
+}
+
+function timelineMouseUp() {
+  if (tlDrag && tlDrag.mode === 'create-pending') {
+    selectedClip = -1;   // short click on empty area = deselect (no clip created)
+    drawTimeline();
+  }
+  tlDrag = null;
+}
+
+function updateTimelineVisibility() {
+  let bar = document.getElementById('timeline-bar');
+  let btn = document.getElementById('toggle-timeline');
+  bar.style.display = timelineEnabled ? 'block' : 'none';
+  btn.textContent = timelineEnabled ? 'on' : 'off';
+  btn.style.color = timelineEnabled ? 'rgba(255,200,100,0.8)' : 'rgba(255,255,255,0.2)';
+  btn.style.borderColor = timelineEnabled ? 'rgba(255,200,100,0.4)' : 'rgba(255,255,255,0.08)';
+  if (timelineEnabled) drawTimeline();
+}
+
+// ─────────────────────────────────────────────
+// OPENFOAM EXPORT (client-side case generator, no server)
+// ─────────────────────────────────────────────
+
+function decodePngToHeights(dataUrl) {
+  return new Promise(function (resolve) {
+    try {
+      const img = new Image();
+      img.onload = function () {
+        const c = document.createElement('canvas');
+        c.width = img.width; c.height = img.height;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const d = ctx.getImageData(0, 0, img.width, img.height).data;
+        const h = [];
+        for (let y = 0; y < img.height; y++) {
+          const row = [];
+          for (let x = 0; x < img.width; x++) {
+            const idx = (y * img.width + x) * 4;
+            row.push((0.299 * d[idx] + 0.587 * d[idx + 1] + 0.114 * d[idx + 2]) / 255);
+          }
+          h.push(row);
+        }
+        resolve(h);
+      };
+      img.onerror = function () { resolve(null); };
+      img.src = dataUrl;
+    } catch (e) { resolve(null); }
+  });
+}
+
+async function exportToOpenFOAM() {
+  const result = document.getElementById('export-result');
+  const btn = document.getElementById('export-btn');
+  if (typeof SedimentCaseGenerator === 'undefined') {
+    result.innerHTML = '<span style="color:#f66">case_generator.js not loaded</span>';
+    return;
+  }
+  try {
+    btn.textContent = 'PACKING...';
+    let heightsPng = null;
+    try { heightsPng = await decodePngToHeights(depoBuffer.elt.toDataURL('image/png')); }
+    catch (e) { heightsPng = null; }
+    const state = {
+      obstacles: obstacles.map(o => ({ type:o.type, x:o.x, y:o.y, w:o.w, h:o.h, rotation:o.rotation, points:(o.points&&o.type==='poly') ? o.points.map(p=>({x:p.x, y:p.y})) : undefined })),
+      inflow: inflowVel, width, height,
+      bed_profile: bedPoints, bed_xsections: bedXSections, heightsPng: heightsPng
+    };
+    const { files, meta } = SedimentCaseGenerator.generateCase(state);
+    const zipBytes = SedimentCaseGenerator.buildZip(files);
+    const blob = new Blob([zipBytes], { type: 'application/zip' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'sediment-openfoam-case.zip';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    const what = meta.nObstacles + ' obstacle(s)' + (meta.hasBed ? ' + bed' : '');
+    const run = meta.hasBed
+      ? 'run: blockMesh → python3 apply_bed.py → snappyHexMesh -overwrite → foamRun'
+      : 'run: blockMesh → snappyHexMesh -overwrite → foamRun';
+    result.innerHTML = 'exported ' + what + ' → sediment-openfoam-case.zip<br><span style="color:#888">' + run + '</span>';
+  } catch (e) {
+    result.innerHTML = '<span style="color:#f66">export failed: ' + e.message + '</span>';
+  }
+  btn.textContent = 'EXPORT CASE';
+}
+
+</script>
+</body>
+</html>

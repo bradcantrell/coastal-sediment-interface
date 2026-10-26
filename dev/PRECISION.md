@@ -137,3 +137,30 @@ before it is used.
 The bar-position sub-score is 0.00 in both cases, so correcting the measurement did not flatter
 the model either — it removed a systematic offset of ~100 m from the storm case, and the score
 fell because the storm profile shape is genuinely worse than the stale measurement showed.
+
+## Baseline after extending both references to 10 model days
+
+Both XBeach cases were re-run at `tstop 86400` with `morfac 10` (10 model days instead of 2.5)
+and recorded with `dev/record_xbeach.py`, which states its convention: finalDz is the
+alongshore mean of (final - initial).
+
+    storm     rmse 0.222 m | barpos 100 m | erosion 0.13 | accretion 0.01
+    moderate  rmse 0.101 m | barpos  95 m | erosion 0.50 | accretion 0.38
+    COMPOSITE 64.5
+
+    progression: 53.4 -> 65.8 -> 73.0 -> 76.4 -> 66.6 (second case)
+                 -> 61.8 (stale-breakpoint fix) -> 62.7 (storm extended)
+                 -> 64.5 (both extended)
+
+The score rose when the references improved, which is the direction it should move. The longer
+runs give the bar time to actually form: the storm crest migrates from x=420 to x=390 and the
+beach cuts back to x=480, so the profile being scored is a morphology rather than an
+adjustment. Accretion goes 0.98 -> 0.01 on the storm case and 0.93 -> 0.38 on the moderate one.
+
+The two old 2.5-day references are kept alongside as `xbeach-reference-2.5d.json` and
+`xbeach-reference-2-2.5d.json` so the earlier numbers remain reproducible.
+
+Bar position is now the single weakest sub-score (100 m and 95 m against a 40 m tolerance) and
+both crests sit too far offshore. Because the extended runs show the crest migrating seaward
+with time but only 30 m in 7.5 days, this is not a duration artefact: the model puts the
+deposition at the breakpoint, the reference puts it in the inner surf zone.

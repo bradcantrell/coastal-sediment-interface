@@ -1526,11 +1526,14 @@ function updateParticles() {
       let bedLeft = bedZ(max(0, p.x - 4), p.y), bedRight = bedZ(min(width, p.x + 4), p.y);
       let gradY = (bedAbove - bedBelow) / 8;   // + = downhill toward +y
       let gradX = (bedLeft - bedRight) / 8;    // + = downhill toward +x
-      // Coastal reach: gentle profile gradients (a 1:10 shoreface, not a flume bed), so
-      // these gains are much smaller than the fluvial ones. At the fluvial setting the
-      // downdip pull overwhelms the wave drift and pins every particle to the offshore edge.
-      p.vy += gradY * cellH * 0.15;
-      p.vx += gradX * cellW * 0.05;
+      // Only ABOVE the waterline. A shoreface does not pull sediment downhill -- the
+      // wave-driven flow dominates -- and applying this under water dragged every particle
+      // offshore and pinned them against the left edge: 2986 of 3000 in the leftmost tenth,
+      // mean x 4.2% of the width. Avalanching is a subaerial process; below water it is wrong.
+      if (bedHere > 0) {
+        p.vy += gradY * cellH * 0.15;
+        p.vx += gradX * cellW * 0.05;
+      }
     }
 
     // FLOW: ×4 rescales the Stam field velocity (u*cellW) to a stable visual drift.
@@ -1643,13 +1646,12 @@ function updateParticles() {
   if (deposited.length > particleCount) deposited.splice(0, deposited.length - particleCount);
 
   while (particles.length < particleCount) {
-    let spawnX = random(cellW, cellW*3), spawnY;
-    if (bedPoints.length >= 2) {
-      let yLo=cellH, yHi=height-cellH, found=false;
-      for (let sy=cellH; sy<height-cellH; sy+=4) { if(bedZ(spawnX,sy)>5){if(!found){yLo=sy;found=true;}yHi=sy;} }
-      spawnY = found && yHi>yLo ? random(yLo,yHi) : random(cellH,height-cellH);
-    } else { spawnY = random(cellH, height-cellH); }
-    particles.push({ x:spawnX, y:spawnY, vx:random(inflowVel*0.5,inflowVel*1.5)*cellW, vy:random(-0.2,0.2)*cellH, born:simTime - random(0, MAX_PARTICLE_AGE) });
+    // Refill with the SAME distribution the initial seeding uses. This used to inject every
+    // replacement into a band one to three cells from the LEFT edge, so each particle that
+    // settled was replaced by one at the inflow and the suspended cloud migrated to the left
+    // wall -- that is the pile-up. Suspended sediment fills the reach; it does not enter as an
+    // inflow stream, which is what spawnParticle() already says.
+    particles.push(spawnParticle());
   }
 }
 

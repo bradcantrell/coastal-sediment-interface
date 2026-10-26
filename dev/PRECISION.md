@@ -110,3 +110,30 @@ so the datums already agree. Qwen's report wandered without landing a mechanism.
 Current score: **76.4**. Weakest are calm drift (0.31) and profile rmse (0.46) — the beach
 still creeps under calm water, and the profile shape is a third of a metre from XBeach over
 part of the shoreface.
+
+## Measurement correction: the scored profile was using a stale breakpoint
+
+The score is only as good as what it measures, and it was measuring the wrong profile.
+
+`runProfile` in the harness stepped `morphStep` directly and never ran the wave field. The
+breakpoint (`barDistanceM`) is computed from the outermost breaking cell, so with no wave field
+it kept its initial value of **60 m**. The checks in Gate B set the storm conditions and read
+the real value (159 m), so the checks and the score were describing two different profiles.
+
+Fixed: `runProfile` now steps `waveFieldStep` and recomputes the bar distance before each
+morphology step.
+
+**This changes the baseline.** Under the corrected measurement the committed model scores
+**61.8**, not 66.6:
+
+    before (stale 60 m breakpoint) 66.6
+    after  (real 159 m breakpoint) 61.8
+
+Nothing about the app changed. The earlier number was partly an artefact of the profile being
+generated at a breakpoint the app would never have used. It is recorded here rather than
+quietly replaced because the whole point of a tolerance or a baseline is that it is stated
+before it is used.
+
+The bar-position sub-score is 0.00 in both cases, so correcting the measurement did not flatter
+the model either — it removed a systematic offset of ~100 m from the storm case, and the score
+fell because the storm profile shape is genuinely worse than the stale measurement showed.

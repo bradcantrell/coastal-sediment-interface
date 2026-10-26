@@ -929,18 +929,21 @@ function morphologyStep(dtModel) {
       // builds the bar; the rest is carried into deeper water. Putting ALL of it in the bar is
       // what made the bar twice as tall as XBeach's -- the eroded volume is right, the share
       // that ends up in the crest is not.
-      const wBar = Math.max(0.12 * Yb, 10);     // sharp component: the bar itself
-      const wDep = Math.max(2.2 * Yb, 200);     // broad component: lower shoreface
-      const fBar = 0.35;                         // share of the load that stays in the bar
+      const wBar = Math.max(0.28 * Yb, 12);     // sharp component: the bar itself
+      const wDep = Math.max(1.2 * Yb, 120);     // broad component: lower shoreface
+      const fBar = 0.45;                         // share of the load that stays in the bar
+      // The discharge begins to slack just before the break, so the crest of the deposit sits
+      // at the breakpoint rather than a bar-width seaward of it.
+      const Yd = Yb - 0.6 * wBar;
       const q0 = UNDERTOW_Q * stormNow * conditions.Hs * conditions.Hs;
       const maxDrop = Math.max(0.68 * stormNow * conditions.Hs, 0.05);
 
       for (let f = 0; f <= GW; f++) {
         const Yf = (xShore - f * DEPO_CELL) * xMPerPx;
         if (Yf <= Y0) faceF[f] = 0;
-        else if (Yf <= Yb) faceF[f] = q0 * (1 - Math.exp(-(Yf - Y0) / Lrise));
+        else if (Yf <= Yd) faceF[f] = q0 * (1 - Math.exp(-(Yf - Y0) / Lrise));
         else {
-          const d = Yf - Yb;
+          const d = Yf - Yd;
           faceF[f] = q0 * (fBar * Math.exp(-d / wBar) + (1 - fBar) * Math.exp(-d / wDep));
         }
       }

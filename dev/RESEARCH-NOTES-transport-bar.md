@@ -87,3 +87,57 @@ reason above.
    `barDistanceM`. If the physics says seaward, the check should say seaward.
 3. Only then retune — the transport version's erosion term is already better than the
    committed one and should not be thrown away with the bar.
+
+## Second pass: the split, and what it exposed
+
+Option taken: split the deposition into a bar component and a lower-shoreface component,
+calibrated across both cases, leaving the breakpoint check where it is.
+
+Implemented as two decay scales seaward of the break:
+
+    F(Y) = q0 * (fBar * exp(-d / wBar) + (1 - fBar) * exp(-d / wDep))
+    d    = Y - (Yb - 0.6 * wBar)      peak pulled just landward of the break
+
+so `wBar` sets the crest width, `wDep` sets how far the remainder is carried, and `fBar` sets
+the share that stays in the crest.
+
+**Result: 56.5** against the committed model. The split works — the crest stopped being 2.4x
+too tall — but it did not close the gap.
+
+### The reason the numbers were not comparable
+
+Sweeping the split changed nothing useful because the **scored profile and the checks were
+measuring different beaches.** `runProfile` never ran the wave field, so `barDistanceM` kept
+its default 60 m while Gate B read the real 159 m. The scored profile was generated at a
+breakpoint the app would never use.
+
+Fixed in the harness (`computeBarDistance` exposed and refreshed after a `waveFieldStep` each
+step). Under the corrected measurement:
+
+    committed model      61.8   (was reported as 66.6)
+    transport + split    56.5
+
+So the real gap is **5.3 points, not 10** — and the committed model's 66.6 was partly an
+artefact. See `PRECISION.md`.
+
+### Where the transport version actually stands
+
+Measured on the corrected harness, storm case:
+
+    erosion   -1.31 @ x=450    XBeach -1.35 @ 465    position good, depth good
+    crest     +0.60 @ x=300    XBeach +0.27 @ 415    2.2x too tall, 115 m short of it
+
+The crest sits at Y ≈ 144 m offshore against a breakpoint of 159 m, which is where transport
+puts it. XBeach's crest is at Y ≈ 29 m in the same frame. **That is a disagreement about where
+the waves break, not about where sediment goes.** The bar cannot land in the right place while
+the breakpoint is 100 m off, and no share parameter will fix it.
+
+### Next, revised
+
+1. Reconcile the breakpoint: the model breaks waves at 159 m offshore, the reference at ~29 m.
+   That is a wave-transformation question — shoaling, the gamma cap, or the depth at breaking —
+   and it gates the bar position.
+2. Only after that is the `fBar`/`wBar` calibration meaningful, because it is being calibrated
+   against a crest position that is itself wrong.
+3. The erosion term in the transport version is already better than the committed one (0.11
+   relative error) and should be kept.

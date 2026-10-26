@@ -225,6 +225,7 @@ try {
   setup: typeof setup==='function'?setup:null,
   draw: typeof draw==='function'?draw:null,
   waveFieldStep: typeof waveFieldStep==='function'?waveFieldStep:null,
+  computeBarDist: typeof computeBarDistance==='function'?computeBarDistance:null,
   getState: () => ({
     comps: typeof waveComponents!=='undefined' ? waveComponents : null,
     cond: typeof conditions!=='undefined' ? conditions : null,
@@ -1248,7 +1249,15 @@ function runProfile(cond, modelDays) {
 
   const before = sample();
   const steps = 400;
-  for (let k = 0; k < steps; k++) app.morphStep((modelDays * 86400) / steps);
+  for (let k = 0; k < steps; k++) {
+    // The breakpoint is measured from the breaking cells, so the wave field must exist before
+    // it can be measured. Without this the dump scored against the stale default of 60 m while
+    // the checks used the real one, which is why the scored profile and the check disagreed
+    // about where the bar was.
+    if (app.waveFieldStep) app.waveFieldStep(0.1);
+    if (app.computeBarDist) app.computeBarDist();
+    app.morphStep((modelDays * 86400) / steps);
+  }
   const after = sample();
   return after.map((v, i) => v - before[i]);
 }

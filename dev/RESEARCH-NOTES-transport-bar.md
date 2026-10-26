@@ -226,3 +226,42 @@ Verified against the existing moderate case, which it reproduces exactly:
 The storm case records as `-1.264 .. +0.355` against the stored `-1.3452 .. +0.2742` at the
 same positions. The stored values came from an earlier run of the same setup; the positions
 agree exactly, so the convention is the same and only the run instance differs.
+
+## Extending the reference: 2.5 days -> 10 days
+
+The storm case was re-run at `tstop 86400` with `morfac 10`, i.e. **10 model days instead of
+2.5**. The 24-hour run took 81 output slices and about 35 minutes of wall clock.
+
+    x      10 d      2.5 d
+    340   +0.249    +0.027
+    390   +0.336    +0.214
+    420   +0.284    +0.274
+    450   -0.617    -0.485
+    470   -1.539    -0.594
+    480   -1.301    +0.000
+
+Two things happened, and both were expected on the transport story:
+
+- the **crest migrated seaward**, from x=420 to x=390 -- 30 m further out in 7.5 extra days
+- the **beach cut back further**, erosion deepening from -1.13 to -1.54 and extending to x=480
+
+So the bar does migrate offshore with time. It just migrates slowly: 30 m in 7.5 days does not
+close a 110 m gap, and there is no sign of it settling at the breakpoint. **Extension settles
+the question by showing that time is not what was missing.** The model and the reference
+disagree about where the load goes at a given time, not about how far along in time they are.
+
+### What it does to the score
+
+Scoring against the 10-day reference rather than the 2.5-day one:
+
+    storm     rmse 0.222 m | barpos 100 m | erosion 0.13 | accretion 0.01
+    moderate  rmse 0.085 m | barpos  60 m | erosion 0.34 | accretion 0.93
+    COMPOSITE 62.7   (was 61.8 against the 2.5-day reference)
+
+Accretion goes from 0.98 to **0.01** — essentially exact — and the storm bar position from 410 m
+to 100 m, because the longer run's crest (+0.336) is very close to the model's (+0.34). The
+better-resolved reference makes the model look better, not worse, which is the right direction
+for a metric to move when the reference improves.
+
+The remaining 100 m of bar position is the deposition-distribution disagreement, and it is
+smaller than it looked when the reference was truncated.

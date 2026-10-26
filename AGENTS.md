@@ -154,3 +154,15 @@ look like it failed. MSYS2 has no `git` of its own — it is a declared dependen
 - Tidal: `D:/workspace/tidal-sediment-interface` (Venice lagoon sibling).
 - XBeach source/build: `D:/workspace/xbeach-src`.
 - Design rationale and phase gates: `PLAN.md`.
+
+## Drawing a bed transect
+
+The long-profile strip spans **z = -150 to +170 bed units** (-7.5 m to +8.5 m), with still
+water drawn on it at z = 0. Use `bedStripY(z)` and `bedStripZ(y)` rather than inlining the
+mapping.
+
+The strip used to map 0..160 and clamp input to `max(0, z)`, so **no drawn transect could go
+below still water**. Every user-drawn profile was therefore dry land: no water column anywhere,
+the wave field had nothing to propagate through, and particles settled along the left edge where
+the bed met the waterline. Four checks now guard this — the strip reaches below datum, reaches
+the dune top, round-trips, and a drawn beach profile is wet over its offshore half.

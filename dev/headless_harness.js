@@ -300,6 +300,18 @@ try {
   resetMorph: typeof resetMorphology==='function' ? resetMorphology : null,
   shorelineYPx: typeof shorelineXPx==='function' ? shorelineXPx : null,
   shoreRef: typeof shoreRefAt==='function' ? shoreRefAt : null,
+  // The long-profile strip mapping. Exposed so the harness can assert that a drawn transect
+  // can reach below still water, which is the difference between a sea and a dry slope.
+  bedStripZ: typeof bedStripZ==='function' ? bedStripZ : null,
+  bedStripY: typeof bedStripY==='function' ? bedStripY : null,
+  setBedPoints: (pts) => {
+    if (typeof bedPoints === 'undefined') return false;
+    bedPoints.length = 0;
+    for (const q of pts) bedPoints.push({ x: q.x, z: q.z });
+    bedPoints.sort((a, b) => a.x - b.x);
+    if (typeof rebuildUserBedGrid === 'function') rebuildUserBedGrid();
+    return true;
+  },
   barDist: typeof computeBarDistance==='function' ? computeBarDistance : null,
   dims: {
     get along() { return typeof REACH_ALONGSHORE !== 'undefined' ? REACH_ALONGSHORE : 400; },
@@ -1116,6 +1128,73 @@ if (process.env.SCORE) {
 
   fs.writeFileSync(process.env.SCORE, JSON.stringify(out, null, 1));
   console.log("precision probes -> " + process.env.SCORE);
+}
+
+// --- a drawn transect can reach below still water
+// This is the bug that made every user-drawn profile a dry slope: the strip mapped 0..bedMaxZ
+// and the input clamped z to >= 0, so no transect could contain sea. Everything then settled at
+// the left, where the bed met the waterline.
+{
+  if (app.bedStripZ && app.bedStripY) {
+    const STRIP_H = 160;                         // BED_STRIP_H; the app's own constant
+    const bottom = app.bedStripZ(height);        // value at the very bottom of the strip
+    const top = app.bedStripZ(height - STRIP_H);
+    const probeY = height - STRIP_H * 0.62;
+    const round = app.bedStripY(app.bedStripZ(probeY));
+    check(bottom < -50, "the bed strip reaches below still water", `bottom z=${bottom.toFixed(0)} bed units`);
+    check(top > 100, "the bed strip still reaches the dune top", `top z=${top.toFixed(0)} bed units`);
+    check(Math.abs(app.bedStripZ(round) - app.bedStripZ(probeY)) < 0.01,
+          "the bed strip mapping round-trips", `${app.bedStripZ(round).toFixed(2)}`);
+  }
+
+  // a submerged ridge must shoal the wave before it breaks -- the expectation that an elevated
+  // area makes a bigger wave is right in intermediate depth, and stops only at breaking.
+  // Measured at MATCHED DEPTH, not at the domain maximum: the maximum sits where the two beds
+  // are identical, so it cannot show shoaling.
+  if (app.setBedPoints) {
+    const hAtDepth = (lo, hi, z) => {
+      app.setBedPoints([
+        { x: 0, z: z[0] },
+        { x: width * 0.5, z: z[1] },
+        { x: width * 0.74, z: 0 },
+        { x: width, z: 150 },
+      ]);
+      app.resetMorph(); app.waveFieldStep(0.1);
+      const st = app.getState();
+      const H = st.H, D = st.D;
+      let sum = 0, n = 0;
+      for (let i = 0; i < H.length; i++) {
+        if (D[i] >= lo && D[i] <= hi) { sum += H[i]; n++; }
+      }
+      return n ? sum / n : 0;
+    };
+    app.cond = app.cond || {};
+    Object.assign(app.cond, { Hs: 2.0, Tp: 9.0, dirDeg: 0, spreadDeg: 0, waterLevel: 0 });
+    const flatDeep = hAtDepth(6.5, 7.5, [-140, -140]);
+    const ridgeShallow = hAtDepth(4.5, 5.5, [-140, -100]);
+    check(ridgeShallow > flatDeep * 1.02, "shallower water shoals the wave",
+          `mean H at 7 m ${flatDeep.toFixed(2)} -> at 5 m ${ridgeShallow.toFixed(2)} m`);
+    app.setBedPoints([]); app.resetMorph();
+  }
+
+  // and a drawn beach profile must actually be wet over its offshore half
+  if (app.setBedPoints) {
+    const drew = app.setBedPoints([
+      { x: 0, z: -140 },                          // -7 m offshore
+      { x: width * 0.74, z: 0 },                  // waterline
+      { x: width, z: 150 },                       // dune
+    ]);
+    if (drew) {
+      app.resetMorph(); app.waveFieldStep(0.1);
+      const D = app.getState().D;
+      let wet = 0, maxd = 0;
+      for (let i = 0; i < D.length; i++) if (D[i] > 0.1) { wet++; if (D[i] > maxd) maxd = D[i]; }
+      check(wet > 0.2 * D.length, "a drawn beach profile contains water",
+            `${wet}/${D.length} wet cells, max depth ${maxd.toFixed(2)} m`);
+      app.setBedPoints([]);
+      app.resetMorph();
+    }
+  }
 }
 
 console.log("");

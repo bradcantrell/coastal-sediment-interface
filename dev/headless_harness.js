@@ -546,6 +546,19 @@ const zBar0 = zM(barX);
 for (let i = 0; i < 20; i++) app.morphStep(STEP);
 const zUpper1 = zM(upperX), zBar1 = zM(barX);
 console.log(`Gate B  storm bar ${barDistStorm.toFixed(1)} m offshore, intensity ${app.getState().storm.toFixed(2)}`);
+{
+  // Is the model breaking where its own profile says it should? depth = wl - bedZ.
+  const wl = app.getState().cond.waterLevel;
+  const pxPerM = D.cross / width;              // metres -> pixels is /pxPerM
+  const xSh = app.shoreRef(GROW);
+  const rows = [20, 40, 60, 80, 120, 159, 200].map(Ym => {
+    const px = xSh - Ym / pxPerM;
+    const z = app.bedZ(px, GROW * 4 + 2) * D.mpbu;
+    return `${Ym}m: h=${(wl - z).toFixed(2)}`;
+  });
+  console.log(`        depth vs offshore distance: ${rows.join('  ')}`);
+  console.log(`        xShore px=${xSh.toFixed(1)} pxPerM=${pxPerM.toFixed(3)} wl=${wl}`);
+}
 console.log(`        upper profile ${zUpper0.toFixed(2)} -> ${zUpper1.toFixed(2)} m (${(zUpper1 - zUpper0).toFixed(2)})`);
 console.log(`        bar crest     ${zBar0.toFixed(2)} -> ${zBar1.toFixed(2)} m (${(zBar1 - zBar0).toFixed(2)})`);
 

@@ -141,3 +141,63 @@ the breakpoint is 100 m off, and no share parameter will fix it.
    against a crest position that is itself wrong.
 3. The erosion term in the transport version is already better than the committed one (0.11
    relative error) and should be kept.
+
+## Reconciling the breakpoint
+
+The breakpoint was the suspected cause: the model breaks at 159 m offshore, the reference's
+accretion maximum is at 29 m. Measured against the model's own profile:
+
+    Y =  20 m  h = 1.68      Y = 120 m  h = 3.71
+          40       2.21            159       4.24   <- breakpoint
+          60       2.65            200       4.91
+          80       3.04
+
+At the breakpoint the depth is **4.24 m**, and the breaking criterion `H = gamma*h` gives
+**3.31 m** with gamma = 0.78. That is where a 3.4 m storm sea breaks on this profile. The
+breakpoint is correct. It is not the obstruction.
+
+### What the reference actually did
+
+The full XBeach storm profile, not just its extremes:
+
+    x=  80..290   +0.00 exactly            <- no morphological change at all
+    x= 300        +0.01
+    x= 380        +0.16
+    x= 420        +0.27   <- accretion maximum, Y = 24 m offshore
+    x= 460        -1.13   <- erosion trough, Y = -16 m
+
+XBeach moved **no sediment** between Y = 80 and Y = 290. Its entire response is a nearshore
+wedge that grows toward the beach and peaks at Y = 24 m, in roughly 2 m of water, with the
+trough 40 m landward of it.
+
+That is an **inner bar**, not a break-bar. A 2.5-day run at morfac 10 has time to adjust the
+inner surf zone; it does not have time to build the outer bar at the breakpoint, where the
+energy is lower and the response slower. Our model builds the break-bar because the undertow
+peaks at the break by construction.
+
+**So the bar-position probe is comparing an outer bar to an inner bar and calling the
+difference an error.** `argmax` picks whichever accretion is largest anywhere in the profile,
+and in the reference that is the nearshore wedge.
+
+### The real disagreement, stated properly
+
+It is not where the waves break. It is the **distribution of deposition**. In the zone the
+reference actually resolved (Y < 80):
+
+    XBeach   peaks at Y = 24 m,  +0.27
+    model    peaks at Y = 64 m,  +0.20,  with its global maximum at the break, Y = 164 m
+
+So the model puts too much of the load at the break and too little into the inner surf zone.
+That is a deposition-shape question, and it is answerable — but only after deciding what the
+reference is a reference *for*, which is a modelling choice rather than a bug.
+
+### Two ways forward
+
+1. **Extend the reference.** Run XBeach longer so a break-bar has time to form, and score
+   against that. The current 2.5-day run resolves the inner surf zone and nothing else.
+2. **Add the inner-surf term.** Give the deposition a second component tied to runup and the
+   inner surf zone, so the model produces the wedge the reference shows instead of only the
+   break-bar.
+
+Option 1 is the honest one for a metric. Option 2 is what makes the model right. They are not
+mutually exclusive, and doing 2 before 1 risks calibrating to a truncated reference.

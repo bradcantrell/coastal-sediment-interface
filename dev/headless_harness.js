@@ -1102,9 +1102,17 @@ if (process.env.SCORE) {
     out.vol_abs = Math.abs(v1 - v0);
   }
 
-  // --- storm bed-change profile against the recorded XBeach run
-  out.storm_dz = runProfile(STORM_COND, 2.5);
-  out.case2_dz = runProfile(CASE2_COND, 2.5);
+  // --- storm bed-change profile against the recorded XBeach run.
+  // The model time comes from the reference itself, so extending the XBeach run cannot leave
+  // the two sides comparing different durations -- which is what a hardcoded 2.5 would do.
+  const refDays = (name, dflt) => {
+    try { return JSON.parse(fs.readFileSync(__dirname + "/coastal-sediment-interface/dev/" + name, "utf8")).modelDays || dflt; }
+    catch (e) { return dflt; }
+  };
+  out.storm_days = refDays("xbeach-reference.json", 2.5);
+  out.case2_days = refDays("xbeach-reference-2.json", 2.5);
+  out.storm_dz = runProfile(STORM_COND, out.storm_days);
+  out.case2_dz = runProfile(CASE2_COND, out.case2_days);
 
   fs.writeFileSync(process.env.SCORE, JSON.stringify(out, null, 1));
   console.log("precision probes -> " + process.env.SCORE);

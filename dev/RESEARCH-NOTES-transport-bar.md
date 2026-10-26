@@ -201,3 +201,28 @@ reference is a reference *for*, which is a modelling choice rather than a bug.
 
 Option 1 is the honest one for a metric. Option 2 is what makes the model right. They are not
 mutually exclusive, and doing 2 before 1 risks calibrating to a truncated reference.
+
+## The XBeach output format, and why the reference looked wrong
+
+Recording the extended run meant reading `zb.dat`, and the existing references had no recorded
+convention. That cost a long detour, so it is written down here.
+
+- `zb.dat` is a plain array of `(nx+1)*(ny+1)` doubles per output with **no header**. The
+  record stride is `121*41*8 = 39688` bytes, and 21 records make the 833448-byte file exactly.
+- The initial bed is `bed.dep`, ASCII, also `(ny+1) x (nx+1)`, identical across alongshore rows.
+- Read with the cell count `120*40 = 4800` instead of `4961`, the array scrambles. The
+  alongshore mean then collapses by a factor of six — the bar appears to vanish, and every
+  magnitude looks wrong by that factor. That misread is what made the reference look like it
+  disagreed with the physics.
+
+`dev/record_xbeach.py` now does this properly and states its convention: **finalDz is the
+alongshore mean of (final - initial)**, with the per-row spread recorded alongside it.
+
+Verified against the existing moderate case, which it reproduces exactly:
+
+    recorded   -0.8274 .. +0.1374   erosion x=450, accretion x=405
+    recorder   -0.8274 .. +0.1382   erosion x=450, accretion x=405
+
+The storm case records as `-1.264 .. +0.355` against the stored `-1.3452 .. +0.2742` at the
+same positions. The stored values came from an earlier run of the same setup; the positions
+agree exactly, so the convention is the same and only the run instance differs.

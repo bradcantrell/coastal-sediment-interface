@@ -234,6 +234,7 @@ try {
     breakHb: typeof breakHb!=='undefined' ? breakHb : null,
     breakDepth: typeof breakDepth!=='undefined' ? breakDepth : null,
     H: typeof waveH!=='undefined' ? waveH : null,
+    WB: typeof waveBreaking!=='undefined' ? waveBreaking : null,
     D: typeof waveDepth!=='undefined' ? waveDepth : null,
     U: typeof u!=='undefined' ? u : null,
     P: typeof particles!=='undefined' ? particles : null,

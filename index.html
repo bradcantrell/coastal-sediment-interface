@@ -521,6 +521,16 @@ let conditions = {
 };
 let breakerGamma = 0.78;
 
+// Hysteresis band on the breaking mask, as fractions of breakerGamma*h.
+// A single threshold re-tested every frame lets cells that sit near the limit flicker on
+// and off. Kazolea (2024, HDR Université de Bordeaux) names this "intermittency of the
+// detection" as one of the two causes of instability at a breaking / non-breaking
+// interface, and it is the one cause we can remove without changing the physics: a cell
+// starts breaking at BREAK_ON and keeps breaking down to BREAK_OFF, so the mask changes
+// only when the wave height moves a real distance past the limit rather than crossing it.
+const BREAK_ON  = 0.97;
+const BREAK_OFF = 0.89;
+
 let waveComponents = [];
 let waveHComp      = [];
 let waveH          = new Float32Array(SIZE);
@@ -701,7 +711,9 @@ function applyField() {
       v[idx] = (amp * Math.sin(ang) * (osc + 0.6) * VEL_GAIN * dtF) / cHm;
 
       const Hb = breakerGamma * h;
-      if (waveH[idx] >= Hb * 0.97) {
+      const hOn = Hb * BREAK_ON, hOff = Hb * BREAK_OFF;
+      const keepBreaking = waveBreaking[idx] === 1;
+      if (keepBreaking ? waveH[idx] >= hOff : waveH[idx] >= hOn) {
         waveBreaking[idx] = 1;
         breakCount++;
         if (waveH[idx] > breakHb) { breakHb = waveH[idx]; breakDepth = h; }

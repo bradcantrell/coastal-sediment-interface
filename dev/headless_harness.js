@@ -248,6 +248,8 @@ try {
       ? obstacles.filter(o => isObstacleActive(o)).length : null,
 
     morph: typeof morphGrid!=='undefined' ? morphGrid : null,
+    gw: typeof GW!=='undefined' ? GW : null,
+    gh: typeof GH!=='undefined' ? GH : null,
     storm: typeof stormNow!=='undefined' ? stormNow : null,
     bar: typeof barDistanceM!=='undefined' ? barDistanceM : null,
   }),

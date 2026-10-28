@@ -164,3 +164,45 @@ Bar position is now the single weakest sub-score (100 m and 95 m against a 40 m 
 both crests sit too far offshore. Because the extended runs show the crest migrating seaward
 with time but only 30 m in 7.5 days, this is not a duration artefact: the model puts the
 deposition at the breakpoint, the reference puts it in the inner surf zone.
+
+---
+
+## Current baseline — HEAD `8141022`
+
+The 64.5 above is an accurate record of the tree at `af3369a`. It is **not the current
+number**, and three things have happened since.
+
+**The recorded baseline was not reproducible on later trees.** Measured on the tree
+immediately before `b76139c` — with hysteresis stashed, so the only difference is the
+pile of physics commits in between — the score is **60.8**, not 64.5. That is a 3.7-point
+drop that this file never recorded. Nothing was wrong with the 64.5 measurement; the
+model moved underneath it and the record did not follow. A score in this file without the
+commit it belongs to is not a baseline, it is a memory.
+
+**Hysteresis cost 15 m of storm bar position.** `b76139c` holds the breaking mask between
+two thresholds. That changes which cells are flagged as breaking, which changes the
+dissipation pattern, which moves the storm bar:
+
+    storm     rmse 0.223 m | barpos 115 m | erosion 0.14 | accretion 0.03
+    moderate  rmse 0.103 m | barpos  95 m | erosion 0.50 | accretion 0.38
+    COMPOSITE 62.6
+
+What moved relative to the 64.5 record:
+
+- CERC r²          0.99601 → 0.99958   better
+- volume drift     2.7e-06 → 7.1e-07   better
+- storm barpos     100 m → 115 m       worse, and barpos now scores 0.00
+- storm accretion  0.01 → 0.03         worse, slightly
+- storm rmse       0.222 → 0.223       unchanged
+
+So the transport closure improved while the score fell 1.9 points, and the bar moved
+further offshore — the wrong direction, given that the section above already names barpos
+as the weak sub-score. Recorded here rather than smoothed over: the score is not the
+objective, but a number without its sub-scores cannot be reproduced or argued with.
+
+**The convergence probe and the interior-reporting fix do not change the score** (62.6
+with and without). That is the correct result for a diagnostic and is why they carry no
+score claim.
+
+**Progression, current:** 53.4 → 65.8 → 73.0 → 76.4 → 66.6 → 61.8 → 62.7 → 64.5
+(`af3369a`) → 60.8 (physics since, unrecorded) → **62.6** (`b76139c`, HEAD `8141022`).

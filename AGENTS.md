@@ -104,7 +104,7 @@ zero, so the bed does not lurch on load.
 ## Testing
 
 ```
-node dev/headless_harness.js index.html      # 63 checks
+node dev/headless_harness.js index.html      # 79 checks
 ```
 
 `node --check` alone is **not** a gate — it passes on a silently empty field.
@@ -112,6 +112,10 @@ node dev/headless_harness.js index.html      # 63 checks
 The harness parses the real markup for slider `value=""` defaults and `<select>` first options.
 **Mocked DOM controls that return "0" have already produced a false pass** (Phase 1 reported
 `max H 0.00 m` with every check green). Do not stub controls by hand.
+
+Record every score with the commit it belongs to, in `dev/PRECISION.md`. A score without a
+commit is a memory, not a baseline: 64.5 was accurate for `af3369a` and is 3.7 points wrong
+for the tree immediately before `b76139c`, and for a while nothing recorded the difference.
 
 ## Pitfalls — each of these cost real time
 

@@ -234,7 +234,6 @@ try {
     breakHb: typeof breakHb!=='undefined' ? breakHb : null,
     breakDepth: typeof breakDepth!=='undefined' ? breakDepth : null,
     H: typeof waveH!=='undefined' ? waveH : null,
-    WB: typeof waveBreaking!=='undefined' ? waveBreaking : null,
     D: typeof waveDepth!=='undefined' ? waveDepth : null,
     U: typeof u!=='undefined' ? u : null,
     P: typeof particles!=='undefined' ? particles : null,
@@ -258,6 +257,8 @@ try {
   eq: typeof equilibriumZ==='function' ? equilibriumZ : null,
   deanA: typeof deanA==='function' ? deanA : null,
   morphStep: typeof morphologyStep==='function' ? morphologyStep : null,
+  convergenceProbe: typeof convergenceProbe==='function' ? convergenceProbe : null,
+  convVerdict: typeof convVerdict==='function' ? convVerdict : null,
   computeLongshore: typeof computeLongshore==='function' ? computeLongshore : null,
   applyLongshore: typeof applyLongshore==='function' ? applyLongshore : null,
   applyNourishment: typeof applyNourishment==='function' ? applyNourishment : null,
@@ -306,6 +307,9 @@ try {
   // can reach below still water, which is the difference between a sea and a dry slope.
   bedStripZ: typeof bedStripZ==='function' ? bedStripZ : null,
   bedStripY: typeof bedStripY==='function' ? bedStripY : null,
+  initParticles: typeof initParticles === 'function' ? initParticles : null,
+  barDistM: () => (typeof barDistanceM !== 'undefined' ? barDistanceM : null),
+  deposited: () => (typeof deposited !== 'undefined' ? deposited : null),
   setBedMode: (v) => { if (typeof bedMode !== 'undefined') bedMode = v; },
   toggleBedMode: typeof toggleBedMode === 'function' ? toggleBedMode : null,
   isPaused: () => (typeof paused !== 'undefined' ? paused : null),
@@ -1227,7 +1231,112 @@ if (process.env.SCORE) {
   }
 }
 
+// --- diagnostic: where the surf zone sits and where particles end up (PROBE=1)
+if (process.env.PROBE) {
+  Object.assign(app.cond, { Hs: 1.20, Tp: 8.0, dirDeg: 0, spreadDeg: 0, waterLevel: 0, d50: 0.30, slope: 0.020 });
+  app.resetMorph();
+  if (app.initParticles) {
+    app.initParticles();
+    const Z = app.getState().P || [];
+    const zz = new Array(10).fill(0);
+    for (const q of Z) zz[Math.max(0, Math.min(9, Math.floor(q.x / width * 10)))]++;
+    console.log(`PROBE spawn deciles: ${zz.join(' ')} (mean x ${(Z.reduce((a,q)=>a+q.x,0)/Z.length/width*100).toFixed(1)}%)`);
+  }
+  for (let i = 0; i < 20; i++) app.draw();
+  app.waveFieldStep(0.1); app.barDist();
+  const st = app.getState();
+  const bd = app.barDistM ? app.barDistM() : null;
+  console.log(`PROBE default cond Hs=${st.cond.Hs} barDistanceM=${bd}`);
+  if (st.U) {
+    let sum = 0, pos = 0, neg = 0, mx = 0;
+    for (let i = 0; i < st.U.length; i++) { const v = st.U[i]; sum += v; if (v > 0) pos++; else if (v < 0) neg++; if (Math.abs(v) > Math.abs(mx)) mx = v; }
+    console.log(`PROBE U: mean=${(sum/st.U.length).toFixed(4)} pos=${pos} neg=${neg} extreme=${mx.toFixed(4)}`);
+  }
+  if (st.D) {
+    let wet = 0; for (let i = 0; i < st.D.length; i++) if (st.D[i] > 0.1) wet++;
+    console.log(`PROBE D: wet cells ${wet}/${st.D.length}`);
+  }
+  const P = st.P || [];
+  console.log(`PROBE waterline px=${app.shoreRef(0).toFixed(0)} width=${width}`);
+  for (const wl of [0, 0.3, 0.6, 1.0]) {
+    app.cond.waterLevel = wl; app.resetMorph(); app.waveFieldStep(0.1); app.barDist();
+    const b2 = app.barDistM();
+    console.log(`PROBE wl=${wl.toFixed(1)} break=${b2.toFixed(0)} m -> px ${(app.shoreRef(0) - b2 * (width / app.dims.cross)).toFixed(0)}`);
+  }
+  app.cond.waterLevel = 0; app.resetMorph(); app.waveFieldStep(0.1); app.barDist();
+  if (bd != null) console.log(`PROBE breakpoint px=${(app.shoreRef(0) - bd * (width / app.dims.cross)).toFixed(0)} (centre=${(width/2).toFixed(0)})`);
+  const dist = () => { const Q = app.getState().P || []; const b = new Array(10).fill(0);
+    for (const q of Q) b[Math.max(0, Math.min(9, Math.floor(q.x / width * 10)))]++; return b; };
+  {
+    const q = (app.getState().P || [])[0];
+    if (q) {
+      const trace = [];
+      for (let k = 0; k < 6; k++) { trace.push(`${q.x.toFixed(0)}/${q.vx.toFixed(2)}`); app.draw(); }
+      console.log(`PROBE trace x/vx: ${trace.join('  ')}`);
+    }
+  }
+  console.log(`PROBE t=0   deciles: ${dist().join(' ')}`);
+  for (let i = 0; i < 20; i++) app.draw();
+  console.log(`PROBE t=20  deciles: ${dist().join(' ')}`);
+  for (let i = 0; i < 80; i++) app.draw();
+  console.log(`PROBE t=100 deciles: ${dist().join(' ')}`);
+  const Q = app.getState().P || [];
+  const bins = new Array(10).fill(0);
+  for (const q of Q) bins[Math.max(0, Math.min(9, Math.floor(q.x / width * 10)))]++;
+  console.log(`PROBE particles n=${Q.length} deciles from left: ${bins.join(' ')}`);
+  {
+    const Dp = app.deposited ? app.deposited() : null;
+    if (Dp) {
+      const b = new Array(10).fill(0);
+      for (const q of Dp) b[Math.max(0, Math.min(9, Math.floor(q.x / width * 10)))]++;
+      console.log(`PROBE deposited n=${Dp.length} deciles: ${b.join(' ')}`);
+    }
+  }
+  console.log(`PROBE mean particle x=${Q.length ? (Q.reduce((a,q)=>a+q.x,0)/Q.length/width*100).toFixed(1) : 'n/a'}% of width`);
+}
+
+// --- particles must fill the reach, not drain to the left wall
+// Every replacement particle used to be injected one to three cells from the left edge, so
+// settling particles were replaced at the inflow and the cloud migrated left: measured at 2986
+// of 3000 in the leftmost tenth, mean x 4.2% of the width.
+{
+  if (app.initParticles) {
+    Object.assign(app.cond, { Hs: 1.20, Tp: 8.0, dirDeg: 0, spreadDeg: 0, waterLevel: 0 });
+    app.resetMorph();
+    app.initParticles();
+    for (let i = 0; i < 200; i++) app.draw();
+    const Q = app.getState().P || [];
+    const meanX = Q.reduce((a, q) => a + q.x, 0) / Math.max(Q.length, 1);
+    const leftTenth = Q.filter(q => q.x < width * 0.1).length / Math.max(Q.length, 1);
+    check(meanX > width * 0.2 && leftTenth < 0.5,
+          "particles fill the reach rather than the left edge",
+          `mean x ${(meanX / width * 100).toFixed(0)}% of width, ${(leftTenth * 100).toFixed(0)}% in the left tenth`);
+  }
+}
+
 console.log("");
+// --- convergence probe: runs, reports a finite drift, and leaves the live bed untouched
+{
+  stormCond(); app.waveFieldStep();
+  for (let i = 0; i < 6; i++) app.morphStep(900);
+  const before = Array.from(app.getState().morph);
+  const c = app.convergenceProbe(900, 12);
+  const after  = Array.from(app.getState().morph);
+  const restored = before.length === after.length && before.every((v, i) => v === after[i]);
+  check(!!c && isFinite(c.dBar) && isFinite(c.dMeanM) && isFinite(c.dMaxM) && restored,
+        "convergence probe reports a drift and restores the bed",
+        c ? `dBar ${c.dBar.toFixed(2)} m, dMean ${c.dMeanM.toFixed(4)} m, dMax ${c.dMaxM.toFixed(3)} m, restored ${restored}` : "null");
+
+  // The app's own timestep at 2 model days/s and a 60 Hz frame, which is the setting a
+  // reader actually gets. Reported, not asserted: if this is not converged that is a
+  // finding about the model, not a broken test.
+  const dtApp = (16.7 / 1000) * 2.0 * 86400;
+  const c2 = app.convergenceProbe(dtApp, 12);
+  check(!!c2 && isFinite(c2.dMeanM) && isFinite(c2.dMaxM),
+        "convergence probe runs at the default timestep",
+        c2 ? `dt ${(dtApp / 3600).toFixed(2)} h, dBar ${c2.dBar.toFixed(1)} m, dMean ${c2.dMeanM.toFixed(4)} m, dMax ${c2.dMaxM.toFixed(2)} m` : "null");
+}
+
 if (failures === 0) console.log("HARNESS PASS");
 else console.log(`HARNESS FAIL — ${failures} check(s)`);
 

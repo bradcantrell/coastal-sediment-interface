@@ -156,7 +156,7 @@
       <span id="ro-zone">–</span>
     </div>
 
-    <div class="sect-label">morphology <button class="reset-btn" id="reset-morph">clear</button></div>
+    <div class="sect-label">morphology <button class="reset-btn" id="btn-conv" title="run the same interval of model time at dt and at dt/2 and report how far the answer moves">conv</button> <button class="reset-btn" id="reset-morph">clear</button></div>
     <div class="ctrl-row"><label>model rate <span class="val" id="mrate-val">2.0</span> d/s</label><input type="range" id="m-rate" min="0.1" max="30" value="2" step="0.1"></div>
     <div class="ctrl-row"><label>response <span class="val" id="relax-val">40</span> d</label><input type="range" id="m-relax" min="5" max="180" value="40" step="5"></div>
     <div class="ctrl-row"><label>longshore <span class="val" id="ls-val">0.03</span></label><input type="range" id="m-long" min="0" max="0.2" value="0.03" step="0.005"></div>
@@ -164,7 +164,8 @@
       erosion <span id="ro-er">0.00</span> m &nbsp; accretion <span id="ro-ac">0.00</span> m<br>
       storm <span id="ro-storm">0.00</span> &nbsp; bar at <span id="ro-bar">–</span> m<br>
       Q peak <span id="ro-qpk">–</span> m&sup3;/s &nbsp; net <span id="ro-qnet">–</span> m&sup3;/s<br>
-      <span id="ro-ls">–</span>
+      <span id="ro-ls">–</span><br>
+      <span id="ro-conv">–</span>
     </div>
 
     <div class="sect-label">export <button class="reset-btn" id="export-xb">xbeach</button></div>
@@ -893,6 +894,71 @@ function computeBarDistance() {
     if (iBreak > 0 && iShore > iBreak) { sum += (iShore - iBreak) * cellW * dxp; n++; }
   }
   barDistanceM = n > 0 ? sum / n : 60;
+}
+
+// ---- convergence probe -------------------------------------------------------
+// dt for the morphology step comes from frame time: dtModel = frameSeconds * rate * 86400,
+// so at 30 fps the model advances twice as far per step as at 60 fps. The horizontal step
+// is implicit (see (I - r*L) and the Thomas solve in morphologyStep), so there is no CFL
+// limit to guard against. But implicit is not the same as accurate: a large r means each
+// step makes a large correction, and the answer then depends on how finely the interval is
+// divided. That dependence is not visible by looking at the screen — a frame-rate artefact
+// and a result look identical.
+//
+// Kazolea (2024, HDR Université de Bordeaux) states the principle: if you cannot be sure
+// the discretisation is adequate, a numerical artefact is easily mistaken for physics. So
+// test rather than inspect. This runs the SAME interval of model time twice, at dt and at
+// dt/2, from an identical bed state, and reports how far the answer moves.
+
+// Tolerances, stated rather than hidden, and arguable on purpose. One morph cell is
+// DEPO_CELL px, about 2.2 m cross-shore on a 1100 px canvas, so 5 m of bar position is
+// roughly two cells. 0.05 m of mean bed change is a twentieth of a metre: below that the
+// two timesteps describe the same beach, above it they describe different beaches.
+const CONV_TOL_BAR_M  = 5.0;
+const CONV_TOL_MEAN_M = 0.05;
+
+let convLast    = null;   // { dt, dBar, dMeanM, dMaxM, steps }
+let lastDtModel = 0;      // the dt the last draw actually used, in model seconds
+
+/** Integrate `steps` of dtModel twice, at dt and dt/2, and report the difference. */
+function convergenceProbe(dtModel, steps) {
+  if (!morphGrid || !morphEnabled || !(dtModel > 0)) return null;
+  const snap = Float32Array.from(morphGrid);
+  const runAt = function (dt, n) {
+    morphGrid.set(snap);
+    for (let k = 0; k < n; k++) morphologyStep(dt);
+    computeBarDistance();
+    return { bar: barDistanceM, bed: Float32Array.from(morphGrid) };
+  };
+  const coarse = runAt(dtModel, steps);
+  const fine   = runAt(dtModel / 2, steps * 2);
+  morphGrid.set(snap);                 // leave the live bed exactly as we found it
+  computeBarDistance();
+
+  // Compare the beds in metres. Not as a percentage of total volume: morphGrid is a
+  // perturbation field that sums to about zero, so a ratio to its sum divides by noise.
+  let sumAbs = 0, maxAbs = 0, n = 0;
+  for (let k = 0; k < coarse.bed.length; k++) {
+    const d = Math.abs(fine.bed[k] - coarse.bed[k]) * M_PER_BED_UNIT;
+    sumAbs += d;
+    if (d > maxAbs) maxAbs = d;
+    n++;
+  }
+  convLast = {
+    dt: dtModel,
+    dBar: Math.abs(fine.bar - coarse.bar),
+    dMeanM: n > 0 ? sumAbs / n : 0,
+    dMaxM: maxAbs,
+    steps: steps,
+  };
+  return convLast;
+}
+
+function convVerdict(c) {
+  if (!c) return null;
+  const ok = c.dBar <= CONV_TOL_BAR_M && c.dMeanM <= CONV_TOL_MEAN_M;
+  return (ok ? '\u2713 ' : '\u2717 ') +
+         '\u0394bar ' + c.dBar.toFixed(0) + ' m  \u0394bed ' + c.dMeanM.toFixed(3) + ' m';
 }
 
 /** One morphology step over dtModel seconds of model time. */
@@ -2100,6 +2166,18 @@ function updateHUD() {
       ' · ' + (st.max > 0.005 ? 'accretion ' + st.max.toFixed(2) + ' m' : 'no accretion');
   }
   document.getElementById('ro-bar').textContent   = barDistanceM > 0 ? barDistanceM.toFixed(0) : '–';
+  {
+    // dt is the timestep the last frame actually used, so a frame-rate change shows here
+    // immediately rather than only inside a probe run.
+    const dtNow = lastDtModel > 0 ? lastDtModel : (16.7 / 1000) * modelDaysPerSec * 86400;
+    const el    = document.getElementById('ro-conv');
+    if (el) {
+      const v = convVerdict(convLast);
+      el.textContent = 'dt ' + (dtNow / 3600).toFixed(2) + ' h' + (v ? '  ' + v : '');
+      el.style.color = (v && v.charAt(0) === '\u2717')
+        ? 'rgba(255,110,110,0.95)' : 'rgba(255,190,120,0.6)';
+    }
+  }
   document.getElementById('ro-runup').textContent  = runupR2.toFixed(2);
   document.getElementById('ro-xi').textContent     = iribarren.toFixed(2);
   document.getElementById('ro-zone').textContent   =
@@ -2247,6 +2325,15 @@ function setup() {
   });
   document.getElementById('export-xb').addEventListener('click', function(){ exportXBeach(); });
   document.getElementById('reset-morph').addEventListener('click', function(){ resetMorphology(); });
+  {
+    const bconv = document.getElementById('btn-conv');
+    if (bconv) bconv.addEventListener('click', function () {
+      bconv.blur();                       // keep Space and the other keys working
+      const dt = lastDtModel > 0 ? lastDtModel : (16.7 / 1000) * modelDaysPerSec * 86400;
+      const res = convergenceProbe(dt, 40);
+      bconv.textContent = res ? 'conv' : 'off';
+    });
+  }
 
   // Physics sliders
   document.getElementById('inflow').addEventListener('input', function(){inflowVel=parseFloat(this.value);document.getElementById('inflow-val').textContent=inflowVel.toFixed(1);});
@@ -2341,6 +2428,7 @@ function draw() {
     waveFieldStep();
     const _dtF = (typeof deltaTime === 'number' ? Math.min(deltaTime, 60) : 16.7) / 1000;
     const dtModel = _dtF * modelDaysPerSec * 86400;      // model seconds this frame
+    lastDtModel = dtModel;
     modelYears += dtModel / (365 * 86400);
     computeBarDistance();
     morphologyStep(dtModel);

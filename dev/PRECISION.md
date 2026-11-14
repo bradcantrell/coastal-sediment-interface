@@ -783,3 +783,14 @@ off, and each was shown to fail:
 Also in this commit: the "response" slider is gone (it had driven nothing since the
 transport rate replaced the relaxation time), and the readout "bar at" is now "breakpoint",
 which is what it always measured.
+
+### The storm and dune checks now run on a bed without particle deposit
+
+Found before merging: "a dune that was never cut does not grow" failed once in four runs of
+the same code. Outside a score run the particles are seeded at random, and the storm and
+dune block of the harness ran with their deposit still on the bed, so its numbers changed
+from run to run (sand missing from the dune: 29.1, 29.4, 31.7 m2/m), and now and then a lump
+near the berm top gave the wind rule a cell to fill on an uncut bed. The block now clears
+the deposit first and puts it back after. Three runs in a row give the same figures: 29.6
+m2/m missing after the storm, 5.9 after two calm years with the wind off, 0.0 with it on.
+The dune checks still fail on the even-fill model.

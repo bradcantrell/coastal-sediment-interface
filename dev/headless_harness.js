@@ -1046,6 +1046,15 @@ if (process.env.PRECISION_DUMP) {
 if (!process.env.SCORE) {
   const condKeep = Object.assign({}, app.cond);
   const morphKeep = Float32Array.from(app.getState().morph);
+  // On a bed without particle deposit, put back afterwards. The particles are seeded at
+  // random outside a score run, so with their deposit left in, the numbers below changed
+  // from run to run (the sand missing from the dune read 29.1, 29.4 and 31.7 m2/m), and
+  // once in four runs a lump near the berm top gave the wind rule something to fill on a
+  // bed that had never been cut.
+  const depoNow = app.getState().depo;
+  if (!depoNow) { console.error("FAIL: cannot reach the deposit grid"); process.exit(1); }
+  const depoKeep = Float32Array.from(depoNow);
+  depoNow.fill(0);
   const stormDays = runProfile(STORM_COND, 10, true);
   const g = app.getState().morph, gw = D.gw, gh = D.gh;
   const cellM = (D.cross / width) * 4;
@@ -1141,8 +1150,6 @@ if (!process.env.SCORE) {
     check(Math.abs(on.net) < 0.05, "dune recovery neither makes nor loses sand in any row", `worst row net ${on.net.toFixed(4)} m2/m`);
 
     // A dune that was never cut does not grow: from a fresh bed the wind changes nothing.
-    // Compared with the wind off rather than with zero, because in this part of the harness
-    // the bed still carries particle deposit, which calm waves spread whatever the wind does.
     // Under calm conditions, set here: under the storm conditions the last check left behind
     // the wind is off and this would pass whatever the rule did.
     const fresh = (rate) => { app.resetMorph(); app.setDuneRate(rate);
@@ -1152,7 +1159,7 @@ if (!process.env.SCORE) {
     const freshOff = fresh(0), freshOn = fresh(30);
     let grown = 0;
     for (let i = 0; i < g.length; i++) grown = Math.max(grown, Math.abs(freshOn[i] - freshOff[i]));
-    check(grown === 0, "a dune that was never cut does not grow", `largest difference from the wind off ${(grown * D.mpbu).toFixed(4)} m`);
+    check(grown === 0, "a dune that was never cut does not grow", `largest difference from the wind off ${(grown * D.mpbu).toExponential(2)} m`);
     app.setDuneRate(rateKeep);
   }
   Object.assign(app.cond, condKeep);
@@ -1160,6 +1167,7 @@ if (!process.env.SCORE) {
   if (app.computeBarDist) app.computeBarDist();
   app.morphStep(1e-6);                       // puts the storm intensity back to these conditions
   app.getState().morph.set(morphKeep);
+  depoNow.set(depoKeep);
 }
 
 if (process.env.SCORE) {

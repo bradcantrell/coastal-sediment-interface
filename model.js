@@ -471,21 +471,25 @@ let shoreRef = null, refWaterLevel = 0;   // per alongshore row (GH)
 
 
 /**
- * Fixed waterline reference per column, from the bed WITHOUT the morphology layer.
+ * Waterline reference per row: where the bed WITHOUT the morphology layer meets the water.
  *
- * Anchored once and held. Two failure modes are avoided by NOT re-deriving it:
- *  - re-anchoring to the evolving shoreline each step makes the target chase the bed,
- *    which diverges;
- *  - re-anchoring on every water-level change cancels the storm signal, because a surge
- *    lifts the waterline and raises the landward target by exactly what the storm lowers.
+ * It follows the water level and nothing else. The target profile hangs from it, so a
+ * surge or sea-level rise lifts the target and moves its origin up the beach, and the
+ * profile responds: sand comes off the beach to raise the nearshore.
  *
- * Consequence, stated plainly: the equilibrium profile does not translate inland under
- * sea-level rise. Shoreline retreat under SLR needs a volume-conserving profile solver
- * and belongs to Phase 3 alongside alongshore transport.
+ * It is taken from the bed without the morphology layer on purpose. Re-anchoring to the
+ * evolving shoreline each step makes the target chase the bed, which diverges.
+ *
+ * Until 2026-11-14 it was anchored at the first morphology step and held, because under the
+ * old storm target re-anchoring on a water-level change cancelled the storm signal. That
+ * meant the same storm gave a different answer depending on whether the surge was already
+ * up when the bed was reset: the precision score saw a +0.17 m bar where the page saw
+ * +0.08 m. The capped-slope target does not have that problem, since the terrace lies far
+ * below the beach wherever the origin is.
  */
 function shoreRefAt(gy) {
-  if (!shoreRef) {
-    shoreRef = new Float32Array(GH);
+  if (!shoreRef || refWaterLevel !== conditions.waterLevel) {
+    if (!shoreRef) shoreRef = new Float32Array(GH);
     refWaterLevel = conditions.waterLevel;
     for (let j = 0; j < GH; j++) {
       const s = shorelineXPx(j, true);
@@ -550,9 +554,7 @@ function shorelineXPx(gj, base) {
  * Y is metres offshore of the waterline: positive seaward, negative landward.
  */
 function equilibriumZ(Y, storm, A) {
-  // Referenced to the water level at anchor time, NOT the live one. A surge would
-  // otherwise lift the landward target by exactly the amount the storm lowers it, and
-  // erosion could never appear.
+  // The water level shoreRefAt() last anchored at, which is the live one once a step has run.
   const wl = refWaterLevel;
   // The Dean curve, with its slope capped. Dean steepens without limit toward the waterline;
   // under storm waves the bed cannot hold that. In all six XBeach reference runs the final

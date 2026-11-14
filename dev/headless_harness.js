@@ -598,14 +598,34 @@ const crestOf = (prof) => {
 // implicit solve is stable at any step, and at that size it smears the young bar flat.
 for (let i = 0; i < 40; i++) app.morphStep(STEP / 20);           // 10 days of storm
 const early = crestOf(seaward());
-for (let i = 0; i < 18; i++) app.morphStep(STEP);                // 100 days in all
+const zUpper10 = zM(upperX);
+
+// --- the bar decays again once the storm passes. Measured on the 10-day bar, where it stood.
+// Until 2026-11-14 this ran after 100 days of storm and measured at the crest of that. With
+// the target following the live water level, a surge held for 100 days is a sea-level rise:
+// the whole profile fills out to the storm's depth of closure, the highest point ends up
+// 180 m offshore in 4.8 m of water, and calm 1.2 m waves do not reach it (their closure is
+// 3 m). That sand stays where it is, which is reported below and is a real limit of the
+// model, but it is not what "the bar decays" is about.
+// In quarter-day steps, as the page takes them. In 5-day steps the implicit solve puts a
+// lowered cell back in one jump, and the check cannot tell whether sand is allowed back
+// above wave reach or not.
+calmCond(); app.waveFieldStep(); app.barDist();
+for (let i = 0; i < 500; i++) app.morphStep(STEP / 20);          // 125 calm days
+const after = crestOf(seaward());
+const atCrest = zM(xShore0 - early.Y / xMPerPx) - sea0[offs.indexOf(early.Y)];
+const zUpperCalm = zM(upperX);
+
+// --- then a long storm, for where the sand does not go
+stormCond(); app.waveFieldStep(); app.barDist();
+for (let i = 0; i < 20; i++) app.morphStep(STEP);                // 100 days of storm
 const sea1 = seaward();
 const late = crestOf(sea1);
 const zUpper1 = zM(upperX);
 const farRise = Math.max(...offs.map((Ym, k) => (Ym >= 350 ? Math.abs(sea1[k] - sea0[k]) : 0)));
 console.log(`Gate B  storm intensity ${app.getState().storm.toFixed(2)}, breakpoint ${barDistStorm.toFixed(0)} m offshore`);
-console.log(`        upper profile ${zUpper0.toFixed(2)} -> ${zUpper1.toFixed(2)} m (${(zUpper1 - zUpper0).toFixed(2)})`);
-console.log(`        bar after 10 d: +${early.rise.toFixed(2)} m at ${early.Y} m offshore; after 100 d: +${late.rise.toFixed(2)} m at ${late.Y} m`);
+console.log(`        upper profile ${zUpper0.toFixed(2)} -> ${zUpper10.toFixed(2)} m after 10 d, ${zUpper1.toFixed(2)} m after the long storm`);
+console.log(`        bar after 10 d: +${early.rise.toFixed(2)} m at ${early.Y} m offshore; after 125 calm days and 100 more of storm: +${late.rise.toFixed(2)} m at ${late.Y} m`);
 console.log(`        largest bed change 350 to 400 m offshore: ${farRise.toFixed(4)} m`);
 
 // The storm target is the Dean curve with its slope capped at the terrace slope XBeach cuts
@@ -622,25 +642,22 @@ console.log(`        largest bed change 350 to 400 m offshore: ${farRise.toFixed
 }
 
 check(app.getState().storm > 0.3, "storm preset registers as a storm", app.getState().storm.toFixed(2));
-check(zUpper1 < zUpper0, "storm erodes the upper profile", `${(zUpper1 - zUpper0).toFixed(2)} m`);
-// 0.05 m is a rise that is plainly there, not a calibrated height. The model gives 0.08 m
-// here and XBeach gives 0.3 to 0.4 m on its own runs: the beach above the old water level
-// is still shut out of transport, so the bar is starved of sand. That is the next piece of
-// work, and this number should go up with it, not down.
-check(early.rise > 0.05, "storm builds a bar from the eroded sand", `+${early.rise.toFixed(2)} m after 10 days`);
+check(zUpper10 < zUpper0, "storm erodes the upper profile", `${(zUpper10 - zUpper0).toFixed(2)} m in 10 days`);
+// 0.2 m: XBeach builds 0.2 to 0.4 m on its own runs at 2 m waves and up. The floor was 0.05 m
+// while the bar was starved of sand (it measured 0.08 m); with the dune feeding the beach it
+// measures 0.3 m, and the floor goes up with it.
+check(early.rise > 0.2, "storm builds a bar from the eroded sand", `+${early.rise.toFixed(2)} m after 10 days`);
 check(early.Y < 0.6 * barDistStorm, "the young bar sits inside the surf zone, not at the breakpoint",
       `${early.Y} m offshore, breakpoint ${barDistStorm.toFixed(0)} m`);
 // Beyond the depth of closure the bed must not move at all. The old model laid a 0.1 m film
 // out to the offshore edge of the grid.
 check(farRise < 0.005, "no sand reaches the seabed beyond the depth of closure", `${farRise.toFixed(4)} m`);
 
-// --- and the bar decays again once the storm passes
-calmCond(); app.waveFieldStep(); app.barDist();
-for (let i = 0; i < 25; i++) app.morphStep(STEP);
-const after = crestOf(seaward());
-const atCrest = zM(xShore0 - late.Y / xMPerPx) - sea0[offs.indexOf(late.Y)];
-console.log(`        after 125 calm days: +${atCrest.toFixed(2)} m where the crest was (recovery ${(atCrest - late.rise).toFixed(2)}), highest +${after.rise.toFixed(2)} m at ${after.Y} m`);
-check(atCrest < late.rise - 0.02, "bar decays after the storm", `${(atCrest - late.rise).toFixed(2)} m at the crest`);
+console.log(`        after 125 calm days: +${atCrest.toFixed(2)} m where the 10-day crest was (${(atCrest - early.rise).toFixed(2)}), highest +${after.rise.toFixed(2)} m at ${after.Y} m; upper profile ${zUpper10.toFixed(2)} -> ${zUpperCalm.toFixed(2)} m`);
+check(atCrest < early.rise - 0.02, "bar decays after the storm", `${(atCrest - early.rise).toFixed(2)} m at the crest`);
+// To within 0.1 m of where it started. With sand not allowed back above wave reach it stops
+// at 0.38 m of the original 0.80 m.
+check(zUpperCalm > zUpper0 - 0.1, "the beach rebuilds in calm after a storm", `${zUpper0.toFixed(2)} -> ${zUpper10.toFixed(2)} -> ${zUpperCalm.toFixed(2)} m, 8 m landward of the calm waterline`);
 
 // --- orientation: the waterline must sit in the right third
 calmCond(); app.waveFieldStep(); app.barDist();
@@ -1029,6 +1046,16 @@ if (!process.env.SCORE) {
         `worst row net ${(worstNet * toM2).toFixed(4)} m2/m`);
   check(edgeGap * D.mpbu < 0.25, "the off-canvas edge row follows its neighbour in a storm",
         `largest gap ${(edgeGap * D.mpbu).toFixed(3)} m`);
+  // One water level. The same storm must leave the same profile whether the surge was
+  // already up when the bed was reset (how the precision score runs it) or arrived on a
+  // beach set up in calm (how the page runs it). Until 2026-11-14 the target stayed hung
+  // from the water level at reset, and the two disagreed.
+  const calmFirst = runProfile(STORM_COND, 10, true,
+    Object.assign({}, STORM_COND, { Hs: 1.2, Tp: 8.0, waterLevel: 0 }))[9];
+  let setupGap = 0;
+  for (let i = 0; i < calmFirst.length; i++) setupGap = Math.max(setupGap, Math.abs(calmFirst[i] - stormDays[9][i]));
+  check(setupGap < 0.02, "a storm leaves the same profile whether the surge came before or after the reset",
+        `largest difference ${setupGap.toFixed(3)} m`);
   // The dune feeds the beach: the scarp is further inland on day 10 than on day 1. Without
   // the slump the cut stops where the waves stop reaching and the storm runs out of sand.
   // Profiles are sampled every 5 m; the landward limit is the last point cut by over 5 cm.
@@ -1576,12 +1603,15 @@ if (process.env.XB_STORM || process.env.XB_CASE2) {
 
 // ============================================================ storm profile, shared
 
-function runProfile(cond, modelDays, daily) {
-  Object.assign(app.cond, cond);
+function runProfile(cond, modelDays, daily, resetUnder) {
+  // resetUnder: conditions the bed is reset and first stepped under, before cond is applied.
+  // The page does this: the beach is set up in calm and the storm arrives afterwards.
+  Object.assign(app.cond, resetUnder || cond);
   app.obstacles.length = 0;
   app.buildSolid();
   app.resetMorph();
   app.setYear(0);
+  if (resetUnder) { app.morphStep(1e-6); Object.assign(app.cond, cond); }
 
   const sample = () => {
     const prof = [];

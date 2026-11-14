@@ -560,3 +560,56 @@ ran away (75 m2/m in the storm against 46). The slump slopes were not fitted.
 One check added (87 in all): "the scarp retreats into the dune through a storm" fails with
 the slump off (455 m on both days). "A storm neither makes nor loses sand in any row" fails
 when the slump is made to drop the sand it moves (-29.6 m2/m).
+
+## One water level: 70.8 (unchanged), and the page now gets what the score sees
+
+Stage 4 step 3, third of three changes. The score does not move, and should not: the score
+already reset each bed with the storm water level up.
+
+**The change.** `shoreRefAt()` re-derives the waterline reference whenever the water level
+changes, from the bed without the morphology layer, and the target hangs from that. It used
+to be anchored at the first morphology step and held, so the same storm gave a different
+answer depending on whether the surge was up when the bed was reset. A storm arriving on a
+beach set up in calm, which is what the page does, now leaves the same 10-day profile as the
+scored setup to 0.000 m; on the previous commit the two differ by 0.206 m.
+
+A side effect, wanted: a raised water level with calm waves now moves the profile slowly up
+and inland (the target's origin moves up the beach and the nearshore wants sand). That is a
+basic sea-level-rise response, which the old comment in the code said the model could not do.
+
+**Gate B was restructured, and this is a change to a check.** "Bar decays after the storm"
+failed. The gate ran 100 days of storm and measured decay at the crest of that. With the
+target following the water level, a surge held for 100 days is a sea-level rise: the profile
+fills out to the storm's depth of closure, the highest point is 180 m offshore in 4.8 m of
+water, and calm 1.2 m waves (closure 3 m) never reach it. The gate now measures decay on the
+10-day bar where it stood, through 125 calm days in quarter-day steps, and then runs the
+100-day storm for the depth-of-closure check. Measured: bar +0.31 m after 10 days, +0.02 m
+after the calm; upper beach 0.80 -> 0.10 -> 0.80 m.
+
+The floor on "storm builds a bar" goes from 0.05 m to 0.2 m (measured 0.31 m), as the note
+beside it said it should once the bar was no longer starved.
+
+**A real limit this exposes.** Sand a storm carries deeper than the calm depth of closure
+does not come back. After the 10-day storm and 125 calm days, +0.15 m is still sitting 132 m
+offshore. This was true before this change (+0.30 m at 142 m); the old gate did not look.
+
+Two checks added (89 in all, 88 passing on vlmars with the known frame-time failure):
+- "A storm leaves the same profile whether the surge came before or after the reset" fails
+  on `f5bf5c8` (0.206 m).
+- "The beach rebuilds in calm after a storm" fails when sand is not allowed back above wave
+  reach (0.38 m of 0.80 m). It only tells the two apart in quarter-day steps: in 5-day steps
+  the implicit solve puts a lowered cell back in one jump.
+
+### Step 3 as a whole
+
+| | Start of step 3 | End |
+|---|---|---|
+| Score, five cases | 55.8 | 70.8 |
+| Mean rmse, six cases (m) | 0.152 | 0.091 |
+| Peak erosion sub-score | 0.00 | 0.51 |
+| Peak accretion sub-score | 0.02 | 0.59 |
+| Profile sub-score | 0.45 | 0.69 |
+| Bar position sub-score | 0.38 | 0.38 |
+| Storm sand moved by day 10 (XBeach 46 m2/m) | 23 | 41 |
+
+Weakest now: the seeded-disequilibrium probe (0.33, untouched by this step) and bar position.

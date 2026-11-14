@@ -676,3 +676,38 @@ The cases were written by the harness (`XB_CASE=... XB_OUT=dir`, new).
   show. The mobility already tapers to zero toward closure; it is not enough on a steep bed.
 
 Nine cases in all: mean rmse 0.098 m, mean deposit centre error 25 m.
+
+## A third fault in the scoring basis: the probes ran on a lumpy bed. 72.3 -> 80.6
+
+Model unchanged (`004dc1a`). Found while testing a softer fade toward the depth of closure,
+which tripped the calm-drift gate (0.04 m against 0.01 m). The tolerance was not touched.
+
+Before the probes, the harness clears the sand that drifting particles have dropped on the
+bed, because, as its own comment says, residual deposition would leak into every probe. The
+two lines that did it read `if (typeof depoGrid !== "undefined" && depoGrid) depoGrid.fill(0)`.
+The harness file's scope is not the page's, so `depoGrid` there is always undefined and the
+lines never did anything. The probes ran on a bed carrying lumps of particle deposit up to
+0.5 m high. This is the same class of fault as the reference lookup that fell back to 2.5
+days: a guard that fails silently.
+
+The clear now goes through `app.getState()` and exits with an error if it cannot reach the
+deposit grid or the particles.
+
+| Probe | Before | After |
+|---|---|---|
+| seeded disequilibrium, rms (m) | 0.0336 | 0 |
+| its sub-score | 0.33 | 1.00 |
+| calm drift, second 100 days (m) | 0.00046 | 0 |
+| volume drift | 3.4e-06 | 2.6e-19 |
+| profile rmse, five cases (sub-score) | 0.69 | 0.68 |
+| deposit centre (sub-score) | 0.51 | 0.52 |
+| composite | 72.3 | 80.6 |
+
+So the "seeded profile" probe, listed as the weakest score since step 3, was measuring the
+lumps. The default bed is exactly at its calm equilibrium and does not move at all. Nearly
+all of the 8.3 points come from that one sub-score going from 0.33 to 1.00; the XBeach
+comparison barely moves, because a profile change is a difference and the lumps mostly
+cancel. Compare scores across this line only on the same basis.
+
+Score history on a like-for-like basis is now: step 3 start 55.8, end 70.8 (lumpy bed, crest
+measure); 72.3 (lumpy bed, centre measure); 80.6 (clean bed, centre measure).

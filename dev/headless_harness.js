@@ -254,6 +254,7 @@ try {
     D: typeof waveDepth!=='undefined' ? waveDepth : null,
     U: typeof u!=='undefined' ? u : null,
     P: typeof particles!=='undefined' ? particles : null,
+    depo: typeof depoGrid!=='undefined' ? depoGrid : null,
     qPeak: typeof qPeak!=='undefined' ? qPeak : null,
     qMean: typeof qMean!=='undefined' ? qMean : null,
     qLong: typeof qLong!=='undefined' ? qLong : null,
@@ -627,6 +628,15 @@ console.log(`Gate B  storm intensity ${app.getState().storm.toFixed(2)}, breakpo
 console.log(`        upper profile ${zUpper0.toFixed(2)} -> ${zUpper10.toFixed(2)} m after 10 d, ${zUpper1.toFixed(2)} m after the long storm`);
 console.log(`        bar after 10 d: +${early.rise.toFixed(2)} m at ${early.Y} m offshore; after 125 calm days and 100 more of storm: +${late.rise.toFixed(2)} m at ${late.Y} m`);
 console.log(`        largest bed change 350 to 400 m offshore: ${farRise.toFixed(4)} m`);
+// The seaward end of the deposit: the largest change in rise between samples 2 m apart,
+// beyond 100 m offshore, after the long storm.
+let ledge = 0, ledgeAt = 0;
+for (let k = 1; k < offs.length; k++) {
+  if (offs[k] < 100) continue;
+  const j = Math.abs((sea1[k] - sea0[k]) - (sea1[k - 1] - sea0[k - 1]));
+  if (j > ledge) { ledge = j; ledgeAt = offs[k]; }
+}
+console.log(`        steepest end of the deposit: ${ledge.toFixed(3)} m in 2 m, ${ledgeAt} m offshore`);
 
 // The storm target is the Dean curve with its slope capped at the terrace slope XBeach cuts
 // (0.023). Read straight off the target function: it does not depend on the run above.
@@ -991,8 +1001,12 @@ if (process.env.PRECISION_DUMP) {
   app.resetMorph();
   // Particle deposition is random, so it must be cleared or the dump differs run to run and
   // the metric measures noise instead of the code change.
-  if (typeof depoGrid !== "undefined" && depoGrid) depoGrid.fill(0);
-  if (typeof particles !== "undefined" && particles) particles.length = 0;
+  // Through app.getState(): this file's scope is not the page's, so a bare `depoGrid` here
+  // is always undefined. Until 2026-11-14 these two lines tested exactly that and silently
+  // did nothing, and the probes ran on a bed with lumps of particle deposit up to 0.5 m high.
+  { const s0 = app.getState();
+    if (!s0.depo || !s0.P) { console.error("FAIL: cannot reach the deposit grid or the particles to clear them"); process.exit(1); }
+    s0.depo.fill(0); s0.P.length = 0; }
   for (let i = 0; i < 4; i++) app.morphStep(86400 * 5);   // give the bed something to draw
   app.rUpdateBedBuffer();
   {
@@ -1075,8 +1089,12 @@ if (process.env.SCORE) {
   const out = {};
   // Start from a clean, reproducible bed: residual deposition from earlier checks would
   // otherwise leak into every probe.
-  if (typeof depoGrid !== "undefined" && depoGrid) depoGrid.fill(0);
-  if (typeof particles !== "undefined" && particles) particles.length = 0;
+  // Through app.getState(): this file's scope is not the page's, so a bare `depoGrid` here
+  // is always undefined. Until 2026-11-14 these two lines tested exactly that and silently
+  // did nothing, and the probes ran on a bed with lumps of particle deposit up to 0.5 m high.
+  { const s0 = app.getState();
+    if (!s0.depo || !s0.P) { console.error("FAIL: cannot reach the deposit grid or the particles to clear them"); process.exit(1); }
+    s0.depo.fill(0); s0.P.length = 0; }
 
   // --- calm drift: an equilibrium-seeded bed must not move at all under calm water
   {

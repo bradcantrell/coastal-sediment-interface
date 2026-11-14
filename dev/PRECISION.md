@@ -613,3 +613,35 @@ Two checks added (89 in all, 88 passing on vlmars with the known frame-time fail
 | Storm sand moved by day 10 (XBeach 46 m2/m) | 23 | 41 |
 
 Weakest now: the seeded-disequilibrium probe (0.33, untouched by this step) and bar position.
+
+## Bar position scored on the deposit centre: 72.3
+
+A change to the score, not to the model (`45bc61b`). The same probes score 70.8 with the old
+measure and 72.3 with the new one. Brad's decision, 2026-11-14.
+
+Bar position used to be the distance between the single highest sample of the model's
+deposit and of XBeach's. Both deposits are about 150 m wide with nearly flat tops, so that
+point moves 35 m on differences of a few centimetres. It is now the distance between the
+centres of mass of everything deposited, with the tolerance left at 40 m.
+
+| Case | Crest apart (m) | Centre apart (m) |
+|---|---|---|
+| storm | 15 | 2 |
+| moderate | 35 | 30 |
+| normal | 5 | 23 |
+| nosurge | 30 | 19 |
+| mid | 40 | 24 |
+| sub-score | 0.38 | 0.51 |
+
+This raises the score without the model getting better, so it should be read with that in
+mind: compare scores across this line only on the same measure. The crest error is still
+printed for every case, and its old sub-score is printed beside the new one.
+
+Why the crest was not chased further. Two scratch trials tried to move it seaward. A lower
+terrace slope (0.021, 0.0195) moved it 5 and 15 m and raised the six-case mean rmse from
+0.092 to 0.129 and 0.162 m, because the upper beach is then cut too deep. A seaward drift
+on the disequilibrium, upwind and conservative, left the crest where it was and moved the
+deposit centre landward (storm 368 -> 384 m against XBeach's 370). XBeach builds a detached
+hump with a dip between it and the beach; a relaxation toward a target fills nearest the
+source first. Getting the hump means a wave-driven transport (undertow, asymmetry), which
+is a rewrite.

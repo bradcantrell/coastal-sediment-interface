@@ -29,7 +29,13 @@ TOL = {
     "cerc_r2":         0.98,   # CERC is exactly sin(2a); below this the fit is not CERC
     "vol_drift":       0.01,   # relative change in total bed volume (exact: 0)
     "profile_rmse_m":  0.30,   # rmse of the 121-point storm dz profile against XBeach
-    "barpos_m":        40.0,   # |bar crest position error| against XBeach
+    # Bar position is the centre of mass of everything deposited, not the crest. Changed
+    # 2026-11-14 with the tolerance left at 40 m. The crest is the single highest sample of a
+    # deposit about 150 m wide with a nearly flat top, in both models, so it jumps: differences
+    # of a few centimetres moved it 35 m. This change raises the score (70.8 -> 72.3 on the
+    # same probes), which is exactly the kind of change to distrust, so the crest error is
+    # still computed and printed beside it.
+    "barpos_m":        40.0,   # |deposit centre position error| against XBeach
     "erosion_rel":     0.30,   # relative error in peak erosion depth
     "accretion_rel":   0.60,   # relative error in peak accretion height
 }
@@ -59,9 +65,8 @@ def case_scores(dz, xb, dx):
 
     barpos = abs(a_j * dx - A_j * dx)
 
-    # Reported, not scored. The crest above is the single highest sample, and both profiles
-    # have long flat tops, so it jumps: two unrelated sediment fixes moved it 15 m. The centre
-    # of mass of everything deposited is steadier and says where the sand went.
+    # barpos, the crest, is reported and not scored (see TOL). The centre of mass of
+    # everything deposited is steadier and says where the sand went.
     def centroid(p):
         w = [max(v, 0.0) for v in p[:n]]
         return sum(i * dx * v for i, v in enumerate(w)) / max(sum(w), 1e-9)
@@ -75,7 +80,8 @@ def case_scores(dz, xb, dx):
         "centroid_err": abs(cen_model - cen_xb), "centroid_model": cen_model,
         "centroid_xb": cen_xb, "deposit_model": dep_model, "deposit_xb": dep_xb,
         "profile": clamp01(1 - rmse / TOL["profile_rmse_m"]),
-        "barpos_s": clamp01(1 - barpos / TOL["barpos_m"]),
+        "barpos_s": clamp01(1 - abs(cen_model - cen_xb) / TOL["barpos_m"]),
+        "crest_s": clamp01(1 - barpos / TOL["barpos_m"]),
         "erosion_s": clamp01(1 - ero / TOL["erosion_rel"]),
         "accretion_s": clamp01(1 - acc / TOL["accretion_rel"]),
     }
@@ -175,12 +181,13 @@ def main():
 
     print("\n  XBeach cases, scored:")
     for name, c in cases:
-        print(f"    {name:9} rmse {c['rmse']:.3f} m | barpos {c['barpos']:4.0f} m | "
+        print(f"    {name:9} rmse {c['rmse']:.3f} m | centre {c['centroid_err']:4.0f} m | "
               f"ero {c['erosion']:5.2f} | acc {c['accretion']:5.2f}")
-        print(f"    {'':9} deposit centre x {c['centroid_model']:.0f} m, XBeach {c['centroid_xb']:.0f} m "
-              f"({c['centroid_err']:.0f} m apart) | deposited {c['deposit_model']:.1f} m2/m, "
-              f"XBeach {c['deposit_xb']:.1f}   [reported, not scored]")
-    for key, label in (("profile", "profile rmse"), ("barpos", "bar position"),
+        print(f"    {'':9} deposit centre x {c['centroid_model']:.0f} m, XBeach {c['centroid_xb']:.0f} m | "
+              f"crest {c['barpos']:.0f} m apart | deposited {c['deposit_model']:.1f} m2/m, "
+              f"XBeach {c['deposit_xb']:.1f}   [crest and volume reported, not scored]")
+    print(f"    mean crest position   score {sum(c['crest_s'] for _, c in cases) / max(len(cases), 1):5.2f}   [the old bar position score, not in the composite]")
+    for key, label in (("profile", "profile rmse"), ("barpos", "deposit centre"),
                        ("erosion", "peak erosion"), ("accretion", "peak accretion")):
         print(f"    mean {label:16} score {s[key]:5.2f}")
 

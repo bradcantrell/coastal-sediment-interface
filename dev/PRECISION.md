@@ -437,3 +437,27 @@ slow time rate the beach will look inert where it used to snap to its storm shap
 
 Also fixed: the scratch arrays in `morphologyStep()` were reallocated every frame because the
 reuse test read `.length` of a plain object.
+
+## Five scored cases: 55.8
+
+`precision_score.py` now scores five XBeach cases instead of two: the storm, the moderate
+case, and the shore-normal, no-surge and mid-energy runs that had been reported only. The
+model is unchanged (`ec25fca`); the same probes score 56.1 on two cases and 55.8 on five.
+
+Why now: a trial terrace target for stage 4 step 3 cut the storm profile error from 0.232 m
+to 0.115 m and raised the moderate one from 0.096 m to 0.184 m. With two cases, half of that
+is hidden. With five, a change has to hold across wave height, surge and angle.
+
+The calm XBeach case stays reported and is not scored. XBeach cuts 0.6 m into the beach under
+1.2 m waves, and this model holds a calm beach still by design.
+
+| Case | rmse (m) | crest error (m) | erosion error | accretion error |
+|---|---|---|---|---|
+| storm | 0.232 | 10 | 0.35 | 0.59 |
+| moderate | 0.098 | 95 | 0.67 | 0.57 |
+| normal | 0.215 | 20 | 0.33 | 0.59 |
+| nosurge | 0.173 | 65 | 0.37 | 0.76 |
+| mid | 0.111 | 15 | 0.53 | 0.60 |
+
+Peak erosion scores 0.00 and peak accretion 0.02 across the five: the model moves about half
+the sand XBeach does in every case. That is what step 3 is for.

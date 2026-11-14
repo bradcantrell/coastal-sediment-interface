@@ -5,11 +5,11 @@ A number to optimise against, built from probes that each have a known correct a
     SCORE=probes.json node dev/headless_harness.js index.html
     python dev/precision_score.py probes.json [--json]
 
-Eight sub-scores, each 1.0 when perfect and 0.0 at tolerance, averaged into a composite out
+Nine sub-scores, each 1.0 when perfect and 0.0 at tolerance, averaged into a composite out
 of 100. Every tolerance is stated here so the score is arguable rather than mystical, and a
 sub-score of 0 means "at or past the limit of what this model should be allowed to claim".
 
-Why these eight: they separate the things that can be wrong independently. A model can
+Why these nine: they separate the things that can be wrong independently. A model can
 conserve volume perfectly and still put the bar in the wrong place; it can match XBeach's
 storm profile and still fail to hold a calm beach still. Collapsing them into one number
 without the breakdown hides which one moved.
@@ -33,6 +33,8 @@ TOL = {
     "erosion_rel":     0.30,   # relative error in peak erosion depth
     "accretion_rel":   0.60,   # relative error in peak accretion height
 }
+
+SCORED_EXTRA = ("normal", "nosurge", "mid")   # see score(); "calm" is reported only
 
 W = {  # equal weight by default; these are separate failure modes, not one thing
     "calm_rate": 1.0, "calm_settle": 1.0, "flux": 1.0, "cerc": 1.0, "volume": 1.0,
@@ -80,11 +82,18 @@ def case_scores(dz, xb, dx):
 
 
 def score(probes, refs):
-    # Both XBeach cases are scored and averaged. Only the storm case was ever used for
-    # calibration, so a change that helps the storm and hurts the moderate case is not an
-    # improvement -- it is a fit.
+    # Five XBeach cases are scored and averaged: the storm, the moderate case, and three more
+    # on the same bed (shore-normal waves, no surge, mid energy). Only the storm case was
+    # used for calibration until 2026-11-14, and a change that helps the storm and hurts the
+    # others is not an improvement, it is a fit. Two cases let that hide: a trial terrace
+    # target halved the storm error while doubling the moderate one.
+    # The calm XBeach case is NOT scored. XBeach cuts 0.6 m into a beach under 1.2 m waves;
+    # this model holds a calm beach still by design (calm_rate, calm_settle), which was a
+    # decision, not an oversight. It stays reported so the disagreement stays visible.
     cases = []
-    for name, dz in (("storm", probes.get("storm_dz")), ("moderate", probes.get("case2_dz"))):
+    named = [("storm", probes.get("storm_dz")), ("moderate", probes.get("case2_dz"))]
+    named += [(n, e["dz"]) for n, e in (probes.get("extra") or {}).items() if n in SCORED_EXTRA]
+    for name, dz in named:
         if not dz:
             continue
         ref = refs[name]
@@ -123,15 +132,18 @@ def main():
     here = __file__.replace("\\", "/").rsplit("/", 1)[0]
     refs = {"storm": json.load(open(here + "/xbeach-reference.json", encoding="utf-8")),
             "moderate": json.load(open(here + "/xbeach-reference-2.json", encoding="utf-8"))}
+    for name in (probes.get("extra") or {}):
+        refs[name] = json.load(open(here + "/xbeach-reference-" + name + ".json", encoding="utf-8"))
 
     s, m, total, cases = score(probes, refs)
 
     # Reported, not scored: the further XBeach cases, and where the bar sits day by day.
     extra = []
     for name, e in (probes.get("extra") or {}).items():
-        ref = json.load(open(here + "/xbeach-reference-" + name + ".json", encoding="utf-8"))
-        xb = ref["finalDz"]
-        extra.append((name, case_scores(e["dz"], xb, ref["meta"]["reachCross"] / (len(xb) - 1))))
+        if name in SCORED_EXTRA:
+            continue
+        xb = refs[name]["finalDz"]
+        extra.append((name, case_scores(e["dz"], xb, refs[name]["meta"]["reachCross"] / (len(xb) - 1))))
     daily = []
     for name, key in (("storm", "storm_daily"), ("moderate", "case2_daily")):
         if probes.get(key):
@@ -161,7 +173,7 @@ def main():
         flag = "  <-- AT LIMIT" if s[key] <= 0.001 else ""
         print(f"  {label:28} {val:>10.5g}   tol {tol:<7g} score {s[key]:5.2f}{flag}")
 
-    print("\n  XBeach cases (only the storm case was calibrated):")
+    print("\n  XBeach cases, scored:")
     for name, c in cases:
         print(f"    {name:9} rmse {c['rmse']:.3f} m | barpos {c['barpos']:4.0f} m | "
               f"ero {c['erosion']:5.2f} | acc {c['accretion']:5.2f}")

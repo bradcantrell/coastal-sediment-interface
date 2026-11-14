@@ -153,6 +153,12 @@ const BERM_TOP_M     = 1.5;   // metres above still water: top of the active bea
 // set from the storm run's deposit, day by day (dev/PRECISION.md, 2026-11-14).
 const TERRACE_SLOPE = 0.023;   // storm nearshore slope, read off six XBeach runs (0.021 to 0.024)
 const TERRACE_YT_PER_A3 = Math.pow((2 / 3) / TERRACE_SLOPE, 3);   // Dean slope = cap at Y = this * A^3
+// Fitted to the six XBeach runs: at 0.10 and 0.20 the mean profile error is 0.107
+// and 0.138 m against 0.092 m here. XBeach's scarp foot sits within 0.6 m of the still water
+// level in every run, which is the same statement.
+const WAVE_REACH_PER_HS = 0.15;
+const SLUMP_WET = 0.3, SLUMP_DRY = 1.0;   // XBeach's wetslp and dryslp defaults
+const SLUMP_PASSES = 4;
 const TRANSPORT_D0   = 0.0023;
 
 const TRANSPORT_HREF = 1.5;
@@ -678,6 +684,7 @@ function morphologyStep(dtModel) {
   const D = TRANSPORT_D0 * Math.max(conditions.Hs, 0.1) / TRANSPORT_HREF;
   const hClose = CLOSURE_BASE_M + CLOSURE_PER_HS * conditions.Hs;
   const r = (D / (1 - POR)) * dtModel / (dx * dx);
+  const reach = conditions.waterLevel + WAVE_REACH_PER_HS * conditions.Hs;
 
   let maxEr = 0, maxAc = 0;
 
@@ -685,12 +692,12 @@ function morphologyStep(dtModel) {
   if (!_morphScratch || _morphScratch.u.length !== GW) {   // was .length, undefined on an object: it reallocated every frame
     _morphScratch = {
       u: new Float64Array(GW), un: new Float64Array(GW), diag: new Float64Array(GW),
-      mob: new Float64Array(GW),
+      mob: new Float64Array(GW), zr: new Float64Array(GW),
       low: new Float64Array(GW), up: new Float64Array(GW), rhs: new Float64Array(GW),
       act: new Uint8Array(GW),
     };
   }
-  const { u, un, diag, low, up, rhs, act, mob } = _morphScratch;
+  const { u, un, diag, low, up, rhs, act, mob, zr } = _morphScratch;
 
   for (let gy = 0; gy < GH; gy++) {
     const xShore = shoreRefAt(gy);
@@ -701,10 +708,15 @@ function morphologyStep(dtModel) {
     for (let gx = 0; gx < GW; gx++) {
       const x = (gx + 0.5) * DEPO_CELL;
       const z = bedZ(x, y) * M_PER_BED_UNIT;
-      // The dune is not a Dean profile: exclude it from transport entirely.
-      if (z > refWaterLevel + BERM_TOP_M) { act[gx] = 0; u[gx] = 0; continue; }
+      zr[gx] = z;
       const Y = (xShore - x) * xMPerPx;
-      u[gx] = z - equilibriumZ(Y, stormNow, A);
+      const du0 = z - equilibriumZ(Y, stormNow, A);
+      // Waves cut the bed only as high as they reach: WAVE_REACH_PER_HS x Hs above the live
+      // water level. Above that the bed is dry and is lowered only by slumping (below).
+      // Sand can be put back higher than it can be cut, up to the berm top, so a beach
+      // that a storm has lowered can rebuild in calm.
+      if (z > reach && !(du0 < 0 && z <= refWaterLevel + BERM_TOP_M)) { act[gx] = 0; u[gx] = 0; continue; }
+      u[gx] = du0;
       act[gx] = 1;
       // Mobility: 1 down to half the depth of closure, then linearly to 0 at closure.
       const depth = conditions.waterLevel - z;
@@ -746,7 +758,33 @@ function morphologyStep(dtModel) {
       if (morphGrid[idx] >  300) morphGrid[idx] =  300;
       if (morphGrid[idx] < -300) morphGrid[idx] = -300;
       if (du < 0 && -du > maxEr) maxEr = -du;
+      zr[gx] += du;
       if (du > 0 &&  du > maxAc) maxAc =  du;
+    }
+
+    // Slumping. Where the waves have cut the bed down, the bed behind it cannot stand
+    // steeper than SLUMP_WET if the lower cell is within wave reach, or SLUMP_DRY above
+    // that; the excess slides down one cell. This is how the dune feeds the beach: the
+    // scarp retreats a cell at a time as its foot is carried away, which is why erosion
+    // keeps growing through a storm instead of stopping when the beach is used up.
+    // What leaves one cell lands in the next, so sand is conserved. The dry limit applies
+    // only behind a cell the model has already lowered, so a steep bank the user has drawn
+    // is left alone until the waves reach it.
+    for (let pass = 0; pass < SLUMP_PASSES; pass++) {
+      for (let gx = 0; gx < GW - 1; gx++) {
+        // Either way round: a scarp faces the sea, the back of a shoal faces the land.
+        const up = zr[gx + 1] >= zr[gx];
+        const hi = up ? gx + 1 : gx, lo = up ? gx : gx + 1;
+        if (zr[hi] <= conditions.waterLevel) continue;
+        const lim = zr[lo] < reach ? SLUMP_WET * dx
+                  : morphGrid[gy * GW + lo] < 0 ? SLUMP_DRY * dx : Infinity;
+        const d = zr[hi] - zr[lo];
+        if (d <= lim) continue;
+        const m = 0.5 * (d - lim);
+        zr[hi] -= m; zr[lo] += m;
+        morphGrid[gy * GW + hi] -= m / M_PER_BED_UNIT;
+        morphGrid[gy * GW + lo] += m / M_PER_BED_UNIT;
+      }
     }
   }
 

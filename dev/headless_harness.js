@@ -1008,7 +1008,7 @@ if (process.env.PRECISION_DUMP) {
 if (!process.env.SCORE) {
   const condKeep = Object.assign({}, app.cond);
   const morphKeep = Float32Array.from(app.getState().morph);
-  runProfile(STORM_COND, 10);
+  const stormDays = runProfile(STORM_COND, 10, true);
   const g = app.getState().morph, gw = D.gw, gh = D.gh;
   const cellM = (D.cross / width) * 4;
   let worstNet = 0, moved = 0, edgeGap = 0;
@@ -1029,6 +1029,13 @@ if (!process.env.SCORE) {
         `worst row net ${(worstNet * toM2).toFixed(4)} m2/m`);
   check(edgeGap * D.mpbu < 0.25, "the off-canvas edge row follows its neighbour in a storm",
         `largest gap ${(edgeGap * D.mpbu).toFixed(3)} m`);
+  // The dune feeds the beach: the scarp is further inland on day 10 than on day 1. Without
+  // the slump the cut stops where the waves stop reaching and the storm runs out of sand.
+  // Profiles are sampled every 5 m; the landward limit is the last point cut by over 5 cm.
+  const scarpAt = (prof) => { let k = -1; for (let i = 0; i < prof.length; i++) if (prof[i] < -0.05) k = i; return k * 5; };
+  const scarp1 = scarpAt(stormDays[0]), scarp10 = scarpAt(stormDays[9]);
+  check(scarp10 - scarp1 >= 10, "the scarp retreats into the dune through a storm",
+        `x ${scarp1} m on day 1, ${scarp10} m on day 10`);
   Object.assign(app.cond, condKeep);
   if (app.waveFieldStep) app.waveFieldStep(0.1);
   if (app.computeBarDist) app.computeBarDist();

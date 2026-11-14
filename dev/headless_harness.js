@@ -1263,7 +1263,9 @@ if (process.env.SCORE) {
   // from the reference file, so the file is the one place a case is defined. Each also
   // records the profile once per model day, to compare with the reference's history.
   out.extra = {};
-  for (const name of ["normal", "nosurge", "mid", "calm"]) {
+  // The three "coarse" cases are a second beach: 0.5 mm sand, and with it the steeper Dean
+  // seabed the default bed takes for that grain size. Nothing was fitted to them.
+  for (const name of ["normal", "nosurge", "mid", "calm", "coarse-storm", "coarse-moderate", "coarse-mid"]) {
     const m = refMeta("xbeach-reference-" + name + ".json");
     const cond = { Hs: m.Hs, Tp: m.Tp, dirDeg: m.dirDeg, spreadDeg: m.spreadDeg,
                    waterLevel: m.waterLevel, slr: 0, d50: m.d50, slope: 0.020 };
@@ -1599,6 +1601,28 @@ if (process.env.XB_STORM || process.env.XB_CASE2) {
   const dst = process.env.XB_CASE2 || process.env.XB_STORM;
   require('fs').writeFileSync(dst, Buffer.from(z2));
   console.log(`wrote case -> ${dst}`);
+}
+
+// ============================================================ any case for XBeach, as files
+// XB_CASE='{"Hs":3.4,"Tp":12,"dirDeg":-28,"spreadDeg":18,"waterLevel":0.8,"d50":0.5}' XB_OUT=dir
+// writes params.txt, bed.dep, jonswap.txt and conditions.json for a 10 model-day run
+// (24 h at morfac 10), the length every reference in dev/ uses. The bed is the default bed
+// for that grain size. conditions.json is what dev/record_xbeach.py takes as its last argument.
+if (process.env.XB_CASE && process.env.XB_OUT) {
+  const fs = require('fs');
+  const c = Object.assign({}, STORM_COND, JSON.parse(process.env.XB_CASE));
+  Object.assign(app.cond, c);
+  app.obstacles.length = 0;
+  app.buildSolid();
+  app.resetMorph();
+  const sx = app.buildXBeach({ hours: 24, morfac: 10 });
+  fs.mkdirSync(process.env.XB_OUT, { recursive: true });
+  fs.writeFileSync(process.env.XB_OUT + '/params.txt', sx.params);
+  fs.writeFileSync(process.env.XB_OUT + '/bed.dep', sx.bed);
+  fs.writeFileSync(process.env.XB_OUT + '/jonswap.txt', sx.jonswap);
+  fs.writeFileSync(process.env.XB_OUT + '/conditions.json', JSON.stringify(
+    { Hs: c.Hs, Tp: c.Tp, dirDeg: c.dirDeg, spreadDeg: c.spreadDeg, waterLevel: c.waterLevel, d50: c.d50 }));
+  console.log(`wrote XBeach case -> ${process.env.XB_OUT}`);
 }
 
 // ============================================================ storm profile, shared

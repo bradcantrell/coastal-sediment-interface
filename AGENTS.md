@@ -140,13 +140,20 @@ reported only, because XBeach erodes a calm beach and this model holds it still 
     SCORE=probes.json node dev/headless_harness.js index.html     # about 5 minutes on vlmars
     python3 dev/precision_score.py probes.json
 
-- Composite 70.8 at `54ee630`. Mean profile error over the six runs 0.091 m.
+- Composite 72.3 (70.8 before bar position was scored on the deposit centre, `29adbbc`). Mean profile error over the six runs 0.091 m.
 - Storm case: correlation 0.99, peak amplitude 0.90 of XBeach's, deposit 41 against 46 m2/m.
 - The transport rate, closure depth and wave reach are fitted to these runs, which share one
   bed and one grain size. Say so when quoting agreement.
+- Three more runs on a second beach (0.5 mm sand, steeper seabed) are reported and not
+  scored: `dev/xbeach-reference-coarse-*.json`. Nothing was fitted to them; mean rmse 0.11 m.
+  Keep them unfitted, or they stop being a test.
+- To make a new case: `XB_CASE='{"Hs":2.7,"d50":0.5,...}' XB_OUT=dir node dev/headless_harness.js
+  index.html` writes the XBeach inputs and `conditions.json`; run XBeach in that folder; then
+  `python3 dev/record_xbeach.py dir 86400 10 dev/xbeach-reference-NAME.json dir/conditions.json`.
 - XBeach runs on vlio (`D:\workspace\xbeach-src`, about 8 minutes a run, CPU only, with
   `C:\msys64\mingw64\bin` on PATH). Run folders: `D:\workspace\xb-storm-long`,
-  `xb-case2-long`, `xb-ref-normal`, `xb-ref-nosurge`, `xb-ref-mid`, `xb-ref-calm`.
+  `xb-case2-long`, `xb-ref-normal`, `xb-ref-nosurge`, `xb-ref-mid`, `xb-ref-calm`, `xb2-storm`,
+  `xb2-moderate`, `xb2-mid`.
 
 ## Timeline
 

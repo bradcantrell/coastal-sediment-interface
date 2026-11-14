@@ -645,3 +645,34 @@ deposit centre landward (storm 368 -> 384 m against XBeach's 370). XBeach builds
 hump with a dip between it and the beach; a relaxation toward a target fills nearest the
 source first. Getting the hump means a wave-driven transport (undertow, asymmetry), which
 is a rewrite.
+
+## A second beach, nothing retuned
+
+The transport rate, the depth of closure and the wave reach were all fitted to six XBeach
+runs on one bed with 0.3 mm sand. This is the first test off that bed. Model `45bc61b`,
+score unchanged at 72.3 (these cases are reported, not scored).
+
+Three new XBeach runs with 0.5 mm sand and the default bed for that grain size, which is a
+steeper seabed (9.1 m deep at the offshore edge against 7.1 m). Same beach face and dune.
+Same forcing as the storm, moderate and mid cases. References
+`dev/xbeach-reference-coarse-{storm,moderate,mid}.json`; vlio folders `D:\workspace\xb2-*`.
+The cases were written by the harness (`XB_CASE=... XB_OUT=dir`, new).
+
+| Case | rmse, 0.3 mm (m) | rmse, 0.5 mm | Eroded, model / XBeach (m2/m) | Deposit centre apart (m) |
+|---|---|---|---|---|
+| storm | 0.061 | 0.082 | 59 / 64 | 26 |
+| moderate | 0.064 | 0.129 | 29 / 27 | 25 |
+| mid | 0.124 | 0.124 | 43 / 40 | 26 |
+
+- XBeach erodes more on the coarser, steeper beach (storm 53 -> 64 m2/m, moderate 15 -> 27),
+  and the model follows it (41 -> 59, 14 -> 28) with no number changed. The steeper Dean
+  curve stands further above the capped-slope line, so there is more to cut.
+- The scarp and the erosion depth agree closely: storm -1.65 against -1.60 m at x = 470 m.
+- The model's deposit is too high and too compact in the two smaller cases (moderate +0.40
+  against +0.32 m) and its centre is about 25 m landward in all three.
+- **An artefact this shows.** The model's deposit ends in a step at the depth of closure:
+  +0.46 m at x = 320 m and nothing at 305 m in the storm case, where XBeach tapers from 0.37
+  to 0.17 m. On the first beach the sand had not reached closure in 10 days, so it did not
+  show. The mobility already tapers to zero toward closure; it is not enough on a steep bed.
+
+Nine cases in all: mean rmse 0.098 m, mean deposit centre error 25 m.

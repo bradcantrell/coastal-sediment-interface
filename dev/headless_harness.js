@@ -578,41 +578,56 @@ const xShore0 = app.shoreRef(GROW);
 const upperX = xShore0 + 8 / xMPerPx;           // 8 m landward of the calm waterline
 const zUpper0 = zM(upperX);
 
-// The storm bar forms where the STORM breaks, far further out than the calm bar.
+// The bar is not at the breakpoint. Until 2026-11-14 the target profile had a bump drawn in
+// there and this gate measured the bed at that one point. XBeach builds its bar from the
+// eroded beach sand, starting at the shoreline and moving seaward, and so does the model
+// now. So: find the bar wherever it is, and check where the sand did and did not go.
 stormCond(); app.waveFieldStep(); app.barDist();
-const barDistStorm = app.getState().bar;
-const barX = xShore0 - barDistStorm / xMPerPx;
-const zBar0 = zM(barX);
+const barDistStorm = app.getState().bar;        // breakpoint distance, for comparison only
+const offs = [];
+for (let Ym = 2; Ym <= 400; Ym += 2) offs.push(Ym);
+const seaward = () => offs.map(Ym => zM(xShore0 - Ym / xMPerPx));
+const sea0 = seaward();
+const crestOf = (prof) => {
+  let best = 0, at = 0;
+  for (let k = 0; k < prof.length; k++) { const d = prof[k] - sea0[k]; if (d > best) { best = d; at = offs[k]; } }
+  return { rise: best, Y: at };
+};
 
-for (let i = 0; i < 20; i++) app.morphStep(STEP);
-const zUpper1 = zM(upperX), zBar1 = zM(barX);
-console.log(`Gate B  storm bar ${barDistStorm.toFixed(1)} m offshore, intensity ${app.getState().storm.toFixed(2)}`);
-{
-  // Is the model breaking where its own profile says it should? depth = wl - bedZ.
-  const wl = app.getState().cond.waterLevel;
-  const pxPerM = D.cross / width;              // metres -> pixels is /pxPerM
-  const xSh = app.shoreRef(GROW);
-  const rows = [20, 40, 60, 80, 120, 159, 200].map(Ym => {
-    const px = xSh - Ym / pxPerM;
-    const z = app.bedZ(px, GROW * 4 + 2) * D.mpbu;
-    return `${Ym}m: h=${(wl - z).toFixed(2)}`;
-  });
-  console.log(`        depth vs offshore distance: ${rows.join('  ')}`);
-  console.log(`        xShore px=${xSh.toFixed(1)} pxPerM=${pxPerM.toFixed(3)} wl=${wl}`);
-}
+// Ten days in quarter-day steps. Two 5-day steps cannot resolve a 10-day transient: the
+// implicit solve is stable at any step, and at that size it smears the young bar flat.
+for (let i = 0; i < 40; i++) app.morphStep(STEP / 20);           // 10 days of storm
+const early = crestOf(seaward());
+for (let i = 0; i < 18; i++) app.morphStep(STEP);                // 100 days in all
+const sea1 = seaward();
+const late = crestOf(sea1);
+const zUpper1 = zM(upperX);
+const farRise = Math.max(...offs.map((Ym, k) => (Ym >= 350 ? Math.abs(sea1[k] - sea0[k]) : 0)));
+console.log(`Gate B  storm intensity ${app.getState().storm.toFixed(2)}, breakpoint ${barDistStorm.toFixed(0)} m offshore`);
 console.log(`        upper profile ${zUpper0.toFixed(2)} -> ${zUpper1.toFixed(2)} m (${(zUpper1 - zUpper0).toFixed(2)})`);
-console.log(`        bar crest     ${zBar0.toFixed(2)} -> ${zBar1.toFixed(2)} m (${(zBar1 - zBar0).toFixed(2)})`);
+console.log(`        bar after 10 d: +${early.rise.toFixed(2)} m at ${early.Y} m offshore; after 100 d: +${late.rise.toFixed(2)} m at ${late.Y} m`);
+console.log(`        largest bed change 350 to 400 m offshore: ${farRise.toFixed(4)} m`);
 
 check(app.getState().storm > 0.3, "storm preset registers as a storm", app.getState().storm.toFixed(2));
 check(zUpper1 < zUpper0, "storm erodes the upper profile", `${(zUpper1 - zUpper0).toFixed(2)} m`);
-check(zBar1 > zBar0, "storm builds a bar at the breakpoint", `${(zBar1 - zBar0).toFixed(2)} m`);
+// 0.05 m is a rise that is plainly there, not a calibrated height. The model gives 0.08 m
+// here and XBeach gives 0.3 to 0.4 m on its own runs: the beach above the old water level
+// is still shut out of transport, so the bar is starved of sand. That is the next piece of
+// work, and this number should go up with it, not down.
+check(early.rise > 0.05, "storm builds a bar from the eroded sand", `+${early.rise.toFixed(2)} m after 10 days`);
+check(early.Y < 0.6 * barDistStorm, "the young bar sits inside the surf zone, not at the breakpoint",
+      `${early.Y} m offshore, breakpoint ${barDistStorm.toFixed(0)} m`);
+// Beyond the depth of closure the bed must not move at all. The old model laid a 0.1 m film
+// out to the offshore edge of the grid.
+check(farRise < 0.005, "no sand reaches the seabed beyond the depth of closure", `${farRise.toFixed(4)} m`);
 
 // --- and the bar decays again once the storm passes
 calmCond(); app.waveFieldStep(); app.barDist();
 for (let i = 0; i < 25; i++) app.morphStep(STEP);
-const zBar2 = zM(barX);
-console.log(`        after calm ${zBar2.toFixed(2)} m (recovery ${(zBar2 - zBar1).toFixed(2)})`);
-check(zBar2 < zBar1, "bar decays after the storm", `${(zBar2 - zBar1).toFixed(2)} m`);
+const after = crestOf(seaward());
+const atCrest = zM(xShore0 - late.Y / xMPerPx) - sea0[offs.indexOf(late.Y)];
+console.log(`        after 125 calm days: +${atCrest.toFixed(2)} m where the crest was (recovery ${(atCrest - late.rise).toFixed(2)}), highest +${after.rise.toFixed(2)} m at ${after.Y} m`);
+check(atCrest < late.rise - 0.02, "bar decays after the storm", `${(atCrest - late.rise).toFixed(2)} m at the crest`);
 
 // --- orientation: the waterline must sit in the right third
 calmCond(); app.waveFieldStep(); app.barDist();

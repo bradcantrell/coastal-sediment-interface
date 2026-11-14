@@ -146,11 +146,22 @@ const DUNE_SLOPE     = 0.05;
 const BERM_TOP_M     = 1.5;   // metres above still water: top of the active beach
 
 
-// Cross-shore transport coefficient at the reference wave height, m2/s. Sets how fast the
-// profile redistributes; scaled by (Hs/1.5)^2 in morphologyStep so storms move sand faster.
-const TRANSPORT_D0   = 0.35;
+// Cross-shore transport coefficient at the reference wave height, m2/s, scaled linearly with
+// Hs in morphologyStep. It was 0.35 with Hs squared, which finished a storm's whole response
+// inside the first model day; six XBeach runs on this bed are still cutting the beach at day
+// ten, and their deposit spreads seaward about as fast at Hs 2 m as at 3.4 m. This value is
+// set from the storm run's deposit, day by day (dev/PRECISION.md, 2026-11-14).
+const TRANSPORT_D0   = 0.0023;
 
 const TRANSPORT_HREF = 1.5;
+
+// Depth of closure in metres below the live water level: 2 m + 0.8 Hs. Seaward of it the bed
+// does not move; mobility falls linearly to zero over the outer half of that depth. XBeach's
+// deposit ends at 2.8 m depth in the calm run and 4 to 5.4 m in the storm runs. Without this
+// the eroded sand spread as a thin film over the whole seabed out to the offshore edge.
+const CLOSURE_BASE_M = 2.0;
+
+const CLOSURE_PER_HS = 0.8;
 
 let conditions = {
   Hs: 1.20,          // m, offshore significant wave height
@@ -534,14 +545,11 @@ function equilibriumZ(Y, storm, A) {
   if (Y >= 0) {
     // cbrt(Y*Y) rather than pow(Y, 2/3): this runs once per cell per frame and Math.pow with a
     // fractional exponent goes through exp/log. Same value, cheaper.
-    let h = A * Math.cbrt(Y * Y);                         // Dean
-    if (storm > 0) {
-      const yb = Math.max(barDistanceM, 15);
-      const w  = Math.max(0.22 * yb, 12);
-      const t  = (Y - yb) / w;
-      h -= storm * 0.05 * conditions.Hs * Math.exp(-t * t);  // bar
-    }
-    return wl - h;
+    // Dean, and nothing else. There used to be a bump drawn into this target at the
+    // breakpoint. XBeach never builds a bar there: in all six reference runs the bar starts at
+    // the shoreline and moves seaward as it grows. The bar now comes from the eroded beach
+    // sand, which morphologyStep keeps inside the depth of closure.
+    return wl - A * Math.cbrt(Y * Y);
   }
   // Landward: the beach gradient this profile is built from, cut back by storm energy.
   // conditions.slope is NOT used here — that is the runup foreshore gradient, a different
@@ -661,23 +669,22 @@ function morphologyStep(dtModel) {
   const dx = DEPO_CELL * xMPerPx;                    // metres per morph cell
   const POR = 0.4;
 
-  // Transport scales with wave energy. This is what lets one constant serve both a storm
-  // that erodes in hours and a recovery that takes weeks.
-  const energy = Math.pow(Math.max(conditions.Hs, 0.1) / TRANSPORT_HREF, 2);
-  const D = TRANSPORT_D0 * energy;
+  const D = TRANSPORT_D0 * Math.max(conditions.Hs, 0.1) / TRANSPORT_HREF;
+  const hClose = CLOSURE_BASE_M + CLOSURE_PER_HS * conditions.Hs;
   const r = (D / (1 - POR)) * dtModel / (dx * dx);
 
   let maxEr = 0, maxAc = 0;
 
   // Reused across frames: allocating seven typed arrays per frame was pure GC pressure.
-  if (!_morphScratch || _morphScratch.length !== GW) {
+  if (!_morphScratch || _morphScratch.u.length !== GW) {   // was .length, undefined on an object: it reallocated every frame
     _morphScratch = {
       u: new Float64Array(GW), un: new Float64Array(GW), diag: new Float64Array(GW),
+      mob: new Float64Array(GW),
       low: new Float64Array(GW), up: new Float64Array(GW), rhs: new Float64Array(GW),
       act: new Uint8Array(GW),
     };
   }
-  const { u, un, diag, low, up, rhs, act } = _morphScratch;
+  const { u, un, diag, low, up, rhs, act, mob } = _morphScratch;
 
   for (let gy = 0; gy < GH; gy++) {
     const xShore = shoreRefAt(gy);
@@ -693,21 +700,23 @@ function morphologyStep(dtModel) {
       const Y = (xShore - x) * xMPerPx;
       u[gx] = z - equilibriumZ(Y, stormNow, A);
       act[gx] = 1;
+      // Mobility: 1 down to half the depth of closure, then linearly to 0 at closure.
+      const depth = conditions.waterLevel - z;
+      mob[gx] = depth <= 0.5 * hClose ? 1 : Math.max(0, (hClose - depth) / (0.5 * hClose));
       any = true;
     }
     if (!any) continue;
 
-    // Implicit tridiagonal: (I - r*L) u_new = u, zero-flux at both ends.
+    // Implicit tridiagonal: (I - r*L) u_new = u. The exchange across each face is weighted by
+    // the less mobile of its two cells, and the same weight is used from both sides, so what
+    // leaves one cell arrives in the next: sand is conserved whatever the mobility does.
+    // A face next to a dune cell, a closed cell or the grid edge carries nothing.
     for (let gx = 0; gx < GW; gx++) {
-      const linkL = gx > 0      && act[gx] && act[gx - 1];
-      const linkR = gx < GW - 1 && act[gx] && act[gx + 1];
-      const rr = (linkL || linkR) ? r : 0;
-      // A boundary cell couples to one neighbour against itself (ghost cell = itself),
-      // which is a zero-flux condition rather than a fixed value.
-      const nb = (linkL ? 1 : 0) + (linkR ? 1 : 0);
-      low[gx]  = linkL ? -rr : 0;
-      up[gx]   = linkR ? -rr : 0;
-      diag[gx] = 1 + rr * Math.max(nb, 0);
+      const fL = (gx > 0      && act[gx] && act[gx - 1]) ? r * Math.min(mob[gx], mob[gx - 1]) : 0;
+      const fR = (gx < GW - 1 && act[gx] && act[gx + 1]) ? r * Math.min(mob[gx], mob[gx + 1]) : 0;
+      low[gx]  = -fL;
+      up[gx]   = -fR;
+      diag[gx] = 1 + fL + fR;
       rhs[gx]  = u[gx];
     }
 

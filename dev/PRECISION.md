@@ -366,3 +366,74 @@ What six cases with history show that two end states could not:
 - The moderate case's crest metric jumped from 95 m to 370 m off. Its true bar is 0.04 m high
   and the highest sample is now a point of the offshore film. This is the instability the
   centre-of-mass measure was added for.
+
+
+---
+
+## The bar comes from the beach: 56.1 (2026-11-14)
+
+Three changes to the cross-shore step, all in `model.js`.
+
+1. **The bump is gone.** `equilibriumZ()` no longer draws a bar into the target at the
+   breakpoint. Seaward of the waterline the target is Dean and nothing else.
+2. **Depth of closure.** Sand moves only shoreward of 2 m + 0.8 Hs of water. Mobility is 1
+   down to half that depth and falls linearly to 0 at it. Each face exchanges with the lower
+   mobility of its two cells, the same from both sides, so the step still conserves sand.
+3. **Slower, and linear in wave height.** `TRANSPORT_D0` 0.35 → 0.0023 m²/s, scaled by Hs/1.5
+   instead of its square. At storm Hs that is 350 times slower.
+
+                 before (53.2)                                         after (56.1)
+    storm     rmse 0.228 | barpos 100 | ero 0.25 | acc 0.61 | centre 185   rmse 0.232 | barpos 10 | ero 0.35 | acc 0.59 | centre  6
+    moderate  rmse 0.099 | barpos 370 | ero 0.60 | acc 0.81 | centre 193   rmse 0.098 | barpos 95 | ero 0.67 | acc 0.57 | centre 36
+    normal    rmse 0.204 | centre 162                                     rmse 0.215 | centre 19
+    nosurge   rmse 0.183 | centre  98                                     rmse 0.173 | centre 29
+    mid       rmse 0.127 | centre 174                                     rmse 0.111 | centre 22
+    calm      rmse 0.081 | centre 140                                     rmse 0.081 | centre 58
+    all six   mean rmse 0.154 m, centre error 159 m                       mean rmse 0.152 m, centre error 28 m
+
+    storm deposit centre x by day, model / XBeach:  d1 417/400  d3 395/382  d5 383/377  d7 374/374  d10 364/370
+
+**What improved.** Where the sand goes. The deposit's centre is within 28 m of XBeach's on
+average, from 159 m, and in the storm case it follows XBeach day by day. No sand reaches the
+seabed beyond closure.
+
+**What did not.** How much sand moves. Profile error is unchanged (0.154 → 0.152 m) and both
+amplitude sub-scores are near zero: the storm bar is +0.17 m against XBeach's +0.41 m,
+erosion −1.16 m against −1.79 m, deposit 23 m² per metre against 46. The model matches
+XBeach's deposit on day 1 (14 / 14) and then runs out of beach: it has a fixed target and
+shuts the bed above `refWaterLevel + 1.5 m` out of transport, while XBeach keeps cutting into
+the dune. Erosion got slightly worse (0.25 → 0.35) because the slower rate has not finished
+the cut the old rate finished on day 1. The supply of sand from the upper beach is the next
+piece of work and the one the remaining error sits in.
+
+**How the three numbers were chosen, and how much to trust them.**
+
+- The rate was swept from 0.35 down to 0.0001 with the closure on and off (twelve variants,
+  six cases each, in a scratch copy). 0.001 at Hs² matched the storm's day-1 deposit and its
+  centre through time. That is one number fitted to one case's history.
+- At Hs² the calm-drift gate failed (0.0126 m against 0.01): beds left out of equilibrium by
+  earlier checks were still relaxing in the second 100 days. The tolerance was not touched.
+  XBeach's deposit moves seaward about as far at Hs 2.0 m (33 m in nine days) as at 3.4 m
+  (30 m), which argues against Hs² independently, so the scaling was changed to linear with
+  the storm rate held. Calm drift is then 0.0006 m. Linear, square-root and no scaling were
+  each scored: 56.1, 55.6, 56.1. The data does not separate them. Linear was kept because
+  the interface needs bigger waves to work faster.
+- The closure depth comes from where XBeach's deposit ends: 2.8 m of water in the calm run,
+  4.0 to 5.4 m in the others. Two numbers read off six runs on one bed and one grain size.
+
+**Gate B was rewritten.** It measured the bed at the breakpoint, which encoded the bump. It
+now finds the bar wherever it is and checks that a storm builds one from the eroded sand,
+that after ten days it sits inside the surf zone and not at the breakpoint, that the seabed
+350 to 400 m offshore does not move, and that the bar decays in calm. The second and third
+fail on the old model; the third fails with the closure switched off. The first has a floor
+of 0.05 m where the gate measures 0.08 m: in the gate the surge arrives on a beach anchored
+at calm water, the active beach is then only 0.7 m above the storm water level, and the bar
+is starved. In `runProfile()` the anchor is taken at the storm level and the same model
+builds +0.17 m. That difference between how the score sets up a storm and how the page does
+was not known before and is part of the same supply question.
+
+**What changes on the page.** Storm response takes model days to weeks now, not hours. At a
+slow time rate the beach will look inert where it used to snap to its storm shape.
+
+Also fixed: the scratch arrays in `morphologyStep()` were reallocated every frame because the
+reuse test read `.length` of a plain object.

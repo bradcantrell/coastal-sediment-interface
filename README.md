@@ -22,7 +22,7 @@ years, and an XBeach case writer.
 Presets and teaching notes are **not built yet** (Phase 6).
 
 **XBeach status.** A generated case builds and runs in XBeach, and the browser model is
-scored against six recorded XBeach runs on the same bed. In the storm case the two change
+scored against eight recorded XBeach runs on two beaches. In the storm case the two change
 profiles correlate at 0.99 and the model moves 0.90 of XBeach's peak amplitude. See
 "Agreement with XBeach" below for what agrees and what does not.
 
@@ -40,7 +40,7 @@ See `PLAN.md` for the full design and the phase gates.
 | Wave input | 1 component (monochromatic) or 7 wrapped-Gaussian directional bins |
 | Profile | Dean h = A·y^(2/3), A from Soulsby (1997) settling velocity |
 | Storm profile | Dean with its slope capped at 0.023 (1 in 43), the line XBeach cuts across the waterline |
-| Cross-shore | Conservative diffusion of the bed's distance from that profile, fading out around a depth of closure of 2 m + 0.8·Hs |
+| Cross-shore | Conservative diffusion of the bed's distance from that profile, fading out around a depth of closure of 2 m + 0.8·Hs, deeper under long-period swell |
 | Dune | Waves cut up to 0.15·Hs above the water; behind that the bed slumps at 0.3 (wet) or 1.0 (dry) |
 | Dune recovery | Wind moves sand from the dry beach to a cut dune at a set rate (default 10 m³/m/yr), in calm only |
 | Longshore | CERC, Q = K/(16(s−1))·Hb^2.5/√γ·sin(2αb) |
@@ -111,17 +111,23 @@ old error and look like the patch failed.
 
 ### Agreement with XBeach
 
-Six XBeach runs on the same bed, each 10 model days (`tstop = 86400`, `morfac = 10`), are
-recorded in `dev/xbeach-reference*.json`. Five are scored; the profiles compared are the
-change in bed level averaged over the middle of the reach.
+Nine XBeach runs, each 10 model days (`tstop = 86400`, `morfac = 10`), are recorded in
+`dev/xbeach-reference*.json`: six on the default beach (0.3 mm sand) and three on a second
+beach (0.5 mm sand and the steeper seabed that goes with it). Eight are scored. The profiles
+compared are the change in bed level averaged over the middle of the reach.
 
-| Case | Hs (m) | Surge (m) | Profile error, rmse (m) | Sand deposited, model / XBeach (m² per m) |
-|---|---|---|---|---|
-| storm | 3.4 | 0.8 | 0.061 | 41 / 46 |
-| normal (same storm, shore-normal) | 3.4 | 0.8 | 0.056 | 41 / 53 |
-| mid | 2.7 | 0.55 | 0.124 | 27 / 29 |
-| moderate | 2.0 | 0.3 | 0.064 | 14 / 19 |
-| no surge | 3.4 | 0 | 0.162 | 15 / 43 |
+| Case | Sand (mm) | Hs (m) | Surge (m) | Profile error, rmse (m) | Sand deposited, model / XBeach (m² per m) |
+|---|---|---|---|---|---|
+| storm | 0.3 | 3.4 | 0.8 | 0.055 | 41 / 46 |
+| normal (same storm, shore-normal) | 0.3 | 3.4 | 0.8 | 0.051 | 41 / 53 |
+| mid | 0.3 | 2.7 | 0.55 | 0.122 | 27 / 29 |
+| moderate | 0.3 | 2.0 | 0.3 | 0.064 | 14 / 19 |
+| no surge | 0.3 | 3.4 | 0 | 0.161 | 15 / 43 |
+| storm, second beach | 0.5 | 3.4 | 0.8 | 0.079 | 57 / 68 |
+| mid, second beach | 0.5 | 2.7 | 0.55 | 0.115 | 42 / 36 |
+| moderate, second beach | 0.5 | 2.0 | 0.3 | 0.128 | 28 / 21 |
+
+Nothing in the model was fitted to the second beach before it was added.
 
 In the storm case the dune scarp is at x = 480 m on day 10 in both models, and the eroded
 volume tracks XBeach day by day (14 against 14 m² per metre on day 1, 41 against 46 on
@@ -129,17 +135,27 @@ day 10).
 
 What does not agree:
 
-- **No surge.** XBeach takes most of that sand from below the waterline. This model cannot
-  erode a submerged profile that is already at its calm shape.
-- **Bar position.** The crest sits 15 to 40 m landward of XBeach's in four of the five cases.
+- **No surge.** Only 11 of the 40 m² per metre in XBeach's bar comes from the beach; the model
+  takes 15 from the beach. Most of the rest XBeach scours from the seabed beside its
+  offshore wave boundary, which is a property of that setup and not of a beach.
+- **Bar shape.** The deposit is a ramp with its crest 15 to 40 m landward of XBeach's detached
+  bar. See "Future work".
 - **Calm.** XBeach cuts 0.6 m into this beach under 1.2 m waves. This model holds a calm
   beach still by design, so that run is reported and not scored.
 - **How fitted it is.** The transport rate, the depth of closure and the wave reach are fitted
-  to these six runs, which share one bed and one grain size.
+  to the six runs on the first beach, which share one bed and one grain size. Dune recovery
+  and the swell term are not fitted to anything.
 
 The composite precision score is 80.4 out of 100 over eight runs, three of them on a second beach (0.5 mm sand, steeper seabed) to which nothing had been fitted when they were added; those three give a mean profile error of 0.11 m. `dev/PRECISION.md` records every score with
 its commit and the reason it moved. Regenerate a reference with `dev/build-xbeach-msys2.sh`,
 a case from the export panel, `xbeach.exe` in that directory, and `dev/record_xbeach.py`.
+
+### Future work
+
+The model builds its storm deposit as a ramp that is highest next to the beach. XBeach, and
+real beaches, build a detached bar with a trough behind it. Getting that shape means
+replacing the cross-shore step with a wave-driven transport (undertow carrying sand seaward,
+wave asymmetry carrying it landward). It is marked as future work and not started.
 
 ## Timeline
 
@@ -230,7 +246,7 @@ equal morphological time (10 d): correlation 0.986 over 55 cells
 amplitude at equal time: 1.614 vs xbeach 1.792 m (ratio 0.90)
 ```
 
-94 checks. 93 pass on vlmars; the one failure is a frame-time limit recorded on a faster
+95 checks. 94 pass on vlmars; the one failure is a frame-time limit recorded on a faster
 machine.
 
 Note: extracting the script and running `node --check` alone is **not** sufficient — it

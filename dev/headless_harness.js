@@ -1160,6 +1160,31 @@ if (!process.env.SCORE) {
     let grown = 0;
     for (let i = 0; i < g.length; i++) grown = Math.max(grown, Math.abs(freshOn[i] - freshOff[i]));
     check(grown === 0, "a dune that was never cut does not grow", `largest difference from the wind off ${(grown * D.mpbu).toExponential(2)} m`);
+
+    // Swell flattens the bump a sea of the same height leaves offshore. From the bed the
+    // storm left, 250 days of 0.9 m waves at 6 s and at 9 s, wind off. Measured as the highest
+    // point of the deposit more than 100 m offshore of the calm waterline, middle row.
+    // Not the volume out there: with the wind off the dune's sand has nowhere to go back to,
+    // and it ends up as an even layer a few centimetres thick over the whole active profile,
+    // which reaches further out under swell. What the short sea cannot do is level the bump
+    // at the edge of its reach.
+    const bumpOffshore = (Tp) => {
+      g.set(afterStorm); app.setDuneRate(0);
+      Object.assign(app.cond, { Hs: 0.9, Tp: Tp, dirDeg: 0, spreadDeg: 0, waterLevel: 0 });
+      if (app.waveFieldStep) app.waveFieldStep(0.1);
+      if (app.computeBarDist) app.computeBarDist();
+      for (let k = 0; k < 250; k++) app.morphStep(86400);
+      const xS = app.shoreRef(rowMid);
+      let t = 0;
+      for (let c = 0; c < gw; c++) {
+        const Y = (xS - (c + 0.5) * 4) * (D.cross / width);
+        if (Y > 100) t = Math.max(t, g[rowMid * gw + c] * D.mpbu);
+      }
+      return t;
+    };
+    const sea = bumpOffshore(6), swell = bumpOffshore(9);
+    console.log(`recovery: highest deposit more than 100 m offshore after 250 days of 0.9 m waves: ${sea.toFixed(3)} m at 6 s, ${swell.toFixed(3)} m at 9 s`);
+    check(swell < 0.6 * sea, "long swell flattens the storm deposit that a short sea leaves offshore", `${swell.toFixed(3)} against ${sea.toFixed(3)} m`);
     app.setDuneRate(rateKeep);
   }
   Object.assign(app.cond, condKeep);

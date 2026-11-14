@@ -167,6 +167,14 @@ const TRANSPORT_HREF = 1.5;
 // does not move; mobility falls linearly to zero over the outer half of that depth. XBeach's
 // deposit ends at 2.8 m depth in the calm run and 4 to 5.4 m in the storm runs. Without this
 // the eroded sand spread as a thin film over the whole seabed out to the offshore edge.
+// Swell reaches deeper than a sea of the same height. In the XBeach references wave height
+// and period rise together (Tp is within half a second of 5.8 + 1.83 Hs in every run), so
+// they cannot say which of the two sets the closure depth, and the fit above is written in
+// height alone. The swell term is the period beyond that line: zero on every reference run,
+// so it leaves the fit and the score untouched. Its size, 0.8 m per second, is a choice and
+// is not fitted to anything. It is there so that a season of long, low swell (the recovery
+// preset, 0.9 m at 9 s) can bring back the sand a storm left below the reach of a short sea.
+const CLOSURE_PER_SWELL_S = 0.8, SWELL_T0 = 5.8, SWELL_T_PER_HS = 1.83;
 const CLOSURE_FADE_END = 1.25;   // mobility reaches zero at this multiple of the closure depth
 const CLOSURE_BASE_M = 2.0;
 
@@ -688,7 +696,8 @@ function morphologyStep(dtModel) {
   const POR = 0.4;
 
   const D = TRANSPORT_D0 * Math.max(conditions.Hs, 0.1) / TRANSPORT_HREF;
-  const hClose = CLOSURE_BASE_M + CLOSURE_PER_HS * conditions.Hs;
+  const hClose = CLOSURE_BASE_M + CLOSURE_PER_HS * conditions.Hs
+               + CLOSURE_PER_SWELL_S * Math.max(0, conditions.Tp - (SWELL_T0 + SWELL_T_PER_HS * conditions.Hs));
   const r = (D / (1 - POR)) * dtModel / (dx * dx);
   const reach = conditions.waterLevel + WAVE_REACH_PER_HS * conditions.Hs;
   // m2 of cross-section per metre of shore this step; none while storm waves are running

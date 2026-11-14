@@ -113,7 +113,11 @@ the numbers and the reasons; do not undo one without reading its entry there.
   evolving bed makes the target chase the bed and diverge.
 - **Depth of closure.** `2.0 + 0.8 * Hs` m of water. Mobility is 1 to half that depth, then
   falls as a cube to 0 at 1.25 times it. A straight fade to 0 at the closure depth left a
-  ledge at the seaward end of the deposit. Each face uses the smaller mobility of its two
+  ledge at the seaward end of the deposit.
+- **Swell.** The closure depth gains `0.8 m` per second of peak period beyond `5.8 + 1.83 * Hs`.
+  That line is the period the XBeach runs had for their wave height, so the term is zero on
+  every reference and the score cannot see it. Its size is a choice. It lets long, low swell
+  level the bump a short sea leaves at the edge of its reach after a storm. Each face uses the smaller mobility of its two
   cells from both sides, which is what keeps the step conservative.
 - **Rate.** `TRANSPORT_D0 = 0.0023` m2/s at 1.5 m waves, linear in Hs. A storm response takes
   model days to weeks.
@@ -131,9 +135,21 @@ the numbers and the reasons; do not undo one without reading its entry there.
 - `morphZ()` and `longZ()` hold their edge value past the last cell centre. Reading zero
   there once let the off-canvas grid row run away and leak into the scored profile.
 
-Known limits: the no-surge XBeach case (XBeach erodes below the waterline), the bar crest 15
-to 40 m landward of XBeach's, and sand carried deeper than the calm depth of closure never
-returning.
+Known limits:
+- The deposit is a ramp, highest next to the beach, with its crest 15 to 40 m landward of
+  XBeach's. XBeach builds a detached bar with a trough behind it.
+- With the dune slider at 0 the sand a storm took from the dune has nowhere to return to and
+  stays as a layer a few centimetres thick over the active profile.
+- The no-surge case scores poorly for a reason that is in the reference, not the model (see
+  "XBeach agreement").
+
+**Future work, not started: a bar and a trough.** Marked by Brad on 2026-11-14 as something
+to address later. Getting a detached bar means replacing the cross-shore step (diffusion of
+the bed's distance from a target) with a wave-driven transport: undertow carrying sand
+seaward, wave asymmetry carrying it landward, the bar forming where they balance. Two
+smaller attempts failed and are recorded in `dev/PRECISION.md`: lowering the terrace slope,
+and a seaward drift on the disequilibrium. It replaces the part of the model that agrees
+with XBeach best, so discuss with Brad before starting.
 
 ## XBeach agreement — what is and is not true
 
@@ -197,7 +213,7 @@ zero, so the bed does not lurch on load.
 ## Testing
 
 ```
-node dev/headless_harness.js index.html      # the coastal model and the export: 94 checks
+node dev/headless_harness.js index.html      # the coastal model and the export: 95 checks
 node dev/interface_harness.js index.html     # the shared interface under this model: 42 checks
 ```
 

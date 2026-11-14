@@ -827,3 +827,33 @@ the seabed next to its offshore wave boundary (0.35 m deep at x = 30 m, in 7 m o
 about 8 m2/m that arrives alongshore. Scour at a wave-generating boundary is a property of
 the XBeach setup, not of a beach. So most of this case's error is the reference, and it
 should not be chased by making the model erode deep water.
+
+## Swell reaches deeper than a sea of the same height: 80.4 (unchanged)
+
+A model change the score cannot see, on purpose.
+
+After a storm, a short calm sea left a bump at the edge of its reach: 0.116 m high, about
+140 m offshore, after 250 days of 0.9 m waves. The closure depth was written in wave height
+alone. In the XBeach references height and period rise together (Tp is within half a second
+of 5.8 + 1.83 Hs in every run), so they cannot say which of the two sets it.
+
+The closure depth now gains 0.8 m per second of peak period beyond that line. The term is
+zero on every reference run, so the fit and the score are untouched (the score output is the
+same to the last printed digit apart from float noise in the volume drift). Its size is a
+choice, not a fit. Under 0.9 m waves at 9 s the bump is 0.040 m after the same 250 days.
+
+What it does not do: with the wind off, the sand the storm took from the dune has nowhere to
+return to, and stays as an even layer of about 0.04 m over the active profile whatever the
+waves do. An earlier version of the check measured the volume lying more than 100 m offshore
+and found 5.0 against 4.7 m2/m; that was measuring this layer, which swell spreads further
+out, and not the bump.
+
+One check added (95 in all, 94 passing on vlmars): "long swell flattens the storm deposit
+that a short sea leaves offshore" fails on the previous model (0.116 m at both periods).
+
+## Future work, marked 2026-11-14: a bar and a trough
+
+Not started. The deposit is a ramp, highest next to the beach; XBeach's is a detached bar.
+The two cheap attempts are recorded above under "Bar position scored on the deposit centre".
+The route that would work is a wave-driven cross-shore transport in place of the relaxation
+toward a target. Brad marked it as something to address later.

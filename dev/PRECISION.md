@@ -744,3 +744,42 @@ profile measure improves. The taper is still steeper than XBeach's.
 
 One check added (90 in all): "the deposit fades out toward the depth of closure, with no
 ledge" fails on the straight fade (0.155 m).
+
+## Dune recovery by wind: 80.2 (unchanged)
+
+A new process, not scored: XBeach has no wind, so there is nothing to compare it with, and
+the scored cases all run under storm waves where it is off.
+
+In calm, sand moves from the dry beach to dune cells the model has lowered, each cell taking
+a share in proportion to what it is missing, at `duneRate` m3 per metre of shore per year
+(slider, 0 to 30, default 10; field rates of dune growth are roughly 5 to 15). The beach
+gives up an even layer, never below wave reach, and the cross-shore step refills it from the
+nearshore. Sand is conserved.
+
+Measured after the 10-day storm, on the footprint of the original dune:
+
+| | Missing (m2/m) |
+|---|---|
+| after the storm | 29.4 |
+| two calm years, wind off | 5.8 |
+| two calm years, 10 m3/m/yr | 0.0 |
+
+So about four fifths of a scarp comes back without wind: calm waves rebuild the beach up to
+the berm top, 1.5 m above the water, and that covers it. Whether real calm waves rebuild
+that high that fast is not something these references can say; XBeach's calm run erodes.
+The wind does the part above the berm top.
+
+Four checks added (94 in all, 93 passing on vlmars). Each compares the wind on with the wind
+off, and each was shown to fail:
+- "the dune does not rebuild while storm waves are running" fails with the wind left on in
+  storms (0.30 m). It has to be tested where there is a dry beach to take sand from;
+  straight after the big storm there is none and the rule is idle either way.
+- "wind rebuilds a cut dune in calm, and waves alone do not" and "a dune that was never cut
+  does not grow" fail when sink cells are filled evenly instead of by what they are missing.
+  The second only fails if it sets calm conditions itself: left under the previous check's
+  storm conditions it passed on the broken model.
+- "dune recovery neither makes nor loses sand in any row".
+
+Also in this commit: the "response" slider is gone (it had driven nothing since the
+transport rate replaced the relaxation time), and the readout "bar at" is now "breakpoint",
+which is what it always measured.

@@ -330,6 +330,8 @@ try {
   bedStripY: typeof bedChartYOf==='function' ? bedChartYOf : null,
   initParticles: typeof initParticles === 'function' ? initParticles : null,
   barDistM: () => (typeof barDistanceM !== 'undefined' ? barDistanceM : null),
+  setDuneRate: (v) => { duneRate = v; },
+  getDuneRate: () => duneRate,
   deposited: () => (typeof deposited !== 'undefined' ? deposited : null),
   setBedMode: (v) => { if (typeof bedMode !== 'undefined') bedMode = v; },
   toggleBedMode: typeof toggleBedMode === 'function' ? toggleBedMode : null,
@@ -1082,6 +1084,77 @@ if (!process.env.SCORE) {
   const scarp1 = scarpAt(stormDays[0]), scarp10 = scarpAt(stormDays[9]);
   check(scarp10 - scarp1 >= 10, "the scarp retreats into the dune through a storm",
         `x ${scarp1} m on day 1, ${scarp10} m on day 10`);
+  // --- Dune recovery. The bed is as the 10-day storm left it. Wind moves sand from the dry
+  // beach to the cut dune, in calm only, and the beach is refilled from the nearshore.
+  {
+    const rowMid = Math.floor(gh / 2);
+    // Sand missing from what was dune to begin with (bed without the morphology layer above
+    // the calm berm top, 1.5 m), in m2 per metre of shore, on the middle row.
+    const duneMissing = () => {
+      let t = 0;
+      for (let c = 0; c < gw; c++) {
+        const mz = g[rowMid * gw + c] * D.mpbu;
+        const z = app.bedZ((c + 0.5) * 4, (rowMid + 0.5) * 4) * D.mpbu;
+        if (mz < 0 && z - mz > 1.5) t -= mz * cellM;
+      }
+      return t;
+    };
+    const rowNetNow = () => { let w = 0; for (let r = 0; r < gh; r++) { let n = 0; for (let c = 0; c < gw; c++) n += g[r * gw + c]; if (Math.abs(n) > Math.abs(w)) w = n; } return w * toM2; };
+    const afterStorm = Float32Array.from(g);
+    const missing0 = duneMissing();
+    const rateKeep = app.getDuneRate();
+
+    // Calm, two years, at 10 m3/m/yr and then the same from the same bed with the wind off.
+    const calmYears = (rate) => {
+      g.set(afterStorm); app.setDuneRate(rate);
+      Object.assign(app.cond, { Hs: 1.2, Tp: 8.0, dirDeg: 0, spreadDeg: 0, waterLevel: 0 });
+      if (app.waveFieldStep) app.waveFieldStep(0.1);
+      if (app.computeBarDist) app.computeBarDist();
+      for (let k = 0; k < 365; k++) app.morphStep(2 * 86400);
+      return { missing: duneMissing(), net: rowNetNow() };
+    };
+    const off = calmYears(0), on = calmYears(10);
+    console.log(`dune: ${missing0.toFixed(1)} m2/m missing after the storm; after 2 calm years ${off.missing.toFixed(1)} with the wind off, ${on.missing.toFixed(1)} at 10 m3/m/yr`);
+    // Under storm waves the wind rule does nothing. Tested from the bed two calm years leave
+    // with the wind off (beach rebuilt, dune still short), under 2 m waves with no surge, so
+    // that there is a dry beach to take sand from. Straight after the big storm there is not,
+    // and the rule would do nothing whether it was switched off for storms or not.
+    const stormDays30 = (rate) => {
+      calmYears(0); app.setDuneRate(rate);
+      Object.assign(app.cond, { Hs: 2.0, Tp: 9.0, dirDeg: 0, spreadDeg: 0, waterLevel: 0 });
+      if (app.waveFieldStep) app.waveFieldStep(0.1);
+      if (app.computeBarDist) app.computeBarDist();
+      for (let k = 0; k < 120; k++) app.morphStep(86400 / 4);
+      return Float32Array.from(g);
+    };
+    const sOff = stormDays30(0), sOn = stormDays30(30);
+    let stormGap = 0;
+    for (let i = 0; i < g.length; i++) stormGap = Math.max(stormGap, Math.abs(sOn[i] - sOff[i]));
+    check(stormGap === 0, "the dune does not rebuild while storm waves are running", `largest difference from the wind off ${(stormGap * D.mpbu).toFixed(4)} m`);
+
+    // Most of what the storm took from the dune's footprint comes back without wind: calm
+    // waves rebuild the beach up to the berm top, 1.5 m, and that covers the scarp. What is
+    // left is the dune above the berm top, which only the wind can reach. So the test is
+    // that the wind returns most of what the waves leave, and that the waves alone do not.
+    check(off.missing > 2 && on.missing < 0.25 * off.missing, "wind rebuilds a cut dune in calm, and waves alone do not",
+          `${off.missing.toFixed(1)} m2/m still missing with the wind off, ${on.missing.toFixed(1)} with it on`);
+    check(Math.abs(on.net) < 0.05, "dune recovery neither makes nor loses sand in any row", `worst row net ${on.net.toFixed(4)} m2/m`);
+
+    // A dune that was never cut does not grow: from a fresh bed the wind changes nothing.
+    // Compared with the wind off rather than with zero, because in this part of the harness
+    // the bed still carries particle deposit, which calm waves spread whatever the wind does.
+    // Under calm conditions, set here: under the storm conditions the last check left behind
+    // the wind is off and this would pass whatever the rule did.
+    const fresh = (rate) => { app.resetMorph(); app.setDuneRate(rate);
+      Object.assign(app.cond, { Hs: 1.2, Tp: 8.0, dirDeg: 0, spreadDeg: 0, waterLevel: 0 });
+      if (app.waveFieldStep) app.waveFieldStep(0.1);
+      for (let k = 0; k < 100; k++) app.morphStep(5 * 86400); return Float32Array.from(g); };
+    const freshOff = fresh(0), freshOn = fresh(30);
+    let grown = 0;
+    for (let i = 0; i < g.length; i++) grown = Math.max(grown, Math.abs(freshOn[i] - freshOff[i]));
+    check(grown === 0, "a dune that was never cut does not grow", `largest difference from the wind off ${(grown * D.mpbu).toFixed(4)} m`);
+    app.setDuneRate(rateKeep);
+  }
   Object.assign(app.cond, condKeep);
   if (app.waveFieldStep) app.waveFieldStep(0.1);
   if (app.computeBarDist) app.computeBarDist();

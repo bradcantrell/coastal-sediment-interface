@@ -42,12 +42,12 @@ See `PLAN.md` for the full design and the phase gates.
 | Storm profile | Dean with its slope capped at 0.023 (1 in 43), the line XBeach cuts across the waterline |
 | Cross-shore | Conservative diffusion of the bed's distance from that profile, fading out around a depth of closure of 2 m + 0.8·Hs |
 | Dune | Waves cut up to 0.15·Hs above the water; behind that the bed slumps at 0.3 (wet) or 1.0 (dry) |
+| Dune recovery | Wind moves sand from the dry beach to a cut dune at a set rate (default 10 m³/m/yr), in calm only |
 | Longshore | CERC, Q = K/(16(s−1))·Hb^2.5/√γ·sin(2αb) |
 | Bed change | dz/dt = −(1/(1−p))·(dQ/dy)/W_active |
 
 **Not modelled:** diffraction (a structure casts a hard shadow), infragravity, erosion of
-the bed below the waterline by storm waves, dune rebuilding (a cut dune stays cut; the beach
-in front of it recovers), and shoreline feedback into the breaking angle, so a groyne fillet
+the bed below the waterline by storm waves, and shoreline feedback into the breaking angle, so a groyne fillet
 does not feed back to reduce transport. The cross-shore and longshore terms both conserve
 sand and are kept in separate bed layers; they are summed into the bed but not yet coupled.
 Sea-level rise is handled only in a basic way: the target profile follows the water level,
@@ -172,7 +172,9 @@ from above that line moves offshore and builds the bar, inside the depth of clos
 Waves only cut as high as they reach. Behind that the dune slumps onto the beach a little at
 a time, so the scarp retreats through the storm and erosion keeps growing instead of
 stopping when the beach is used up. A storm response takes model days to weeks. When the
-storm passes the bar decays and the beach rebuilds to the berm top; the dune does not.
+storm passes the bar decays and calm waves rebuild the beach to the berm top within months.
+Above that, wind carries sand from the dry beach back to the cut dune at the **dune recovery**
+rate, over years.
 
 ## Units and orientation
 
@@ -228,7 +230,7 @@ equal morphological time (10 d): correlation 0.986 over 55 cells
 amplitude at equal time: 1.614 vs xbeach 1.792 m (ratio 0.90)
 ```
 
-90 checks. 89 pass on vlmars; the one failure is a frame-time limit recorded on a faster
+94 checks. 93 pass on vlmars; the one failure is a frame-time limit recorded on a faster
 machine.
 
 Note: extracting the script and running `node --check` alone is **not** sufficient — it

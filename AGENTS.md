@@ -79,8 +79,7 @@ The fluvial Stam solver is **gone**. In its place, one analytic pass per frame:
 - `applyNourishment()` — sand placed by `kind: 'nourish'` objects.
 
 **Not modelled:** diffraction (a structure casts a hard shadow), infragravity, erosion of the
-bed below the waterline by storm waves, dune rebuilding, and shoreline feedback into the
-breaking angle. Sea-level rise is basic: the target follows the water level.
+bed below the waterline by storm waves, and shoreline feedback into the breaking angle. Sea-level rise is basic: the target follows the water level.
 
 ## Bed model — three layers, and why
 
@@ -124,12 +123,17 @@ the numbers and the reasons; do not undo one without reading its entry there.
 - **Slump.** Behind a cell the model has lowered, the bed cannot stand steeper than 0.3 if the
   lower cell is within wave reach, 1.0 otherwise. Both directions. This is how the dune feeds
   the beach and why erosion keeps growing through a storm.
+- **Dune recovery.** In calm, wind moves sand from the dry beach (above wave reach, up to the
+  berm top) to dune cells the model has lowered, each in proportion to what it is missing,
+  at `duneRate` m3 per metre per year (the "dune recovery" slider, default 10). Off under
+  storm waves. Not fitted to anything: XBeach has no wind. Calm waves alone rebuild the beach
+  to the berm top, which covers most of a scarp; the wind does the part above that.
 - `morphZ()` and `longZ()` hold their edge value past the last cell centre. Reading zero
   there once let the off-canvas grid row run away and leak into the scored profile.
 
 Known limits: the no-surge XBeach case (XBeach erodes below the waterline), the bar crest 15
-to 40 m landward of XBeach's, sand carried deeper than the calm depth of closure never
-returning, and no dune rebuilding.
+to 40 m landward of XBeach's, and sand carried deeper than the calm depth of closure never
+returning.
 
 ## XBeach agreement — what is and is not true
 
@@ -190,7 +194,7 @@ zero, so the bed does not lurch on load.
 ## Testing
 
 ```
-node dev/headless_harness.js index.html      # the coastal model and the export: 90 checks
+node dev/headless_harness.js index.html      # the coastal model and the export: 94 checks
 node dev/interface_harness.js index.html     # the shared interface under this model: 42 checks
 ```
 

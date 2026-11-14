@@ -462,7 +462,10 @@ let morphGrid = null;
 
 let modelDaysPerSec = 2.0;     // model days per real second
 
-let relaxDays = 40;            // e-folding time of the profile response, model days
+// Wind-blown dune recovery, m3 per metre of shore per year. Field rates of dune growth are
+// roughly 5 to 15. XBeach has no wind, so unlike the storm numbers this is not fitted to
+// anything; it is a slider.
+let duneRate = 10;
 
 let morphEnabled = true;
 
@@ -688,6 +691,8 @@ function morphologyStep(dtModel) {
   const hClose = CLOSURE_BASE_M + CLOSURE_PER_HS * conditions.Hs;
   const r = (D / (1 - POR)) * dtModel / (dx * dx);
   const reach = conditions.waterLevel + WAVE_REACH_PER_HS * conditions.Hs;
+  // m2 of cross-section per metre of shore this step; none while storm waves are running
+  const duneVol = duneRate * (1 - stormNow) * dtModel / (365.25 * 86400);
 
   let maxEr = 0, maxAc = 0;
 
@@ -792,6 +797,51 @@ function morphologyStep(dtModel) {
         zr[hi] -= m; zr[lo] += m;
         morphGrid[gy * GW + hi] -= m / M_PER_BED_UNIT;
         morphGrid[gy * GW + lo] += m / M_PER_BED_UNIT;
+      }
+    }
+
+    // Dune recovery. Wind carries sand from the dry beach to a dune the waves have cut, and
+    // the dune rebuilds toward the bed it had before. The sinks are cells that are dry, lower
+    // than they were, and were dune to begin with (above the berm top); each takes a share
+    // in proportion to how much it is missing. The sources are the dry beach cells seaward
+    // of them, which give up an even layer, never below wave reach. What the beach loses the
+    // cross-shore step above puts back from the nearshore, so the bar ends up feeding the
+    // dune by way of the beach. Sand is conserved. Nothing moves under storm waves, and a
+    // dune that was never cut has no sink cells and does not grow.
+    if (duneVol > 0) {
+      const bermTop = conditions.waterLevel + BERM_TOP_M;
+      let need = 0, nSrc = 0, firstSink = -1;
+      for (let gx = 0; gx < GW; gx++) {
+        const m = morphGrid[gy * GW + gx] * M_PER_BED_UNIT;
+        act[gx] = 0;                                    // reused: 1 = sink, 2 = source
+        if (m < 0 && zr[gx] > reach && zr[gx] - m > bermTop) {
+          act[gx] = 1; need -= m;
+          if (firstSink < 0) firstSink = gx;
+        }
+      }
+      if (firstSink >= 0) {
+        for (let gx = 0; gx < firstSink; gx++) {
+          if (zr[gx] > reach && zr[gx] <= bermTop) { act[gx] = 2; nSrc++; }
+        }
+      }
+      if (need > 0 && nSrc > 0) {
+        // Volumes here are thickness x dx per metre of shore; everything is in thickness.
+        let give = Math.min(duneVol / dx, need);        // total thickness to move
+        let got = 0;
+        const layer = give / nSrc;
+        for (let gx = 0; gx < firstSink; gx++) {
+          if (act[gx] !== 2) continue;
+          const t = Math.min(layer, zr[gx] - reach);
+          zr[gx] -= t; got += t;
+          morphGrid[gy * GW + gx] -= t / M_PER_BED_UNIT;
+        }
+        for (let gx = firstSink; gx < GW; gx++) {
+          if (act[gx] !== 1) continue;
+          const idx = gy * GW + gx;
+          const t = got * (-morphGrid[idx] * M_PER_BED_UNIT) / need;
+          zr[gx] += t;
+          morphGrid[idx] += t / M_PER_BED_UNIT;
+        }
       }
     }
   }
@@ -1181,11 +1231,11 @@ registerModel({
 
 <div class="sect-label">morphology <button class="reset-btn" id="btn-conv" title="run the same interval of model time at dt and at dt/2 and report how far the answer moves">conv</button> <button class="reset-btn" id="reset-morph">clear</button></div>
 <div class="ctrl-row"><label>model rate <span class="val" id="mrate-val">2.0</span> d/s</label><input type="range" id="m-rate" min="0.1" max="30" value="2" step="0.1"></div>
-<div class="ctrl-row"><label>response <span class="val" id="relax-val">40</span> d</label><input type="range" id="m-relax" min="5" max="180" value="40" step="5"></div>
+<div class="ctrl-row"><label>dune recovery <span class="val" id="dune-val">10</span> m&sup3;/m/yr</label><input type="range" id="m-dune" min="0" max="30" value="10" step="1"></div>
 <div class="ctrl-row"><label>longshore <span class="val" id="ls-val">0.03</span></label><input type="range" id="m-long" min="0" max="0.2" value="0.03" step="0.005"></div>
 <div id="morph-readout" style="font-size:9px;color:rgba(255,190,120,0.6);line-height:1.5;margin:4px 0 3px 0;font-variant-numeric:tabular-nums;">
   erosion <span id="ro-er">0.00</span> m &nbsp; accretion <span id="ro-ac">0.00</span> m<br>
-  storm <span id="ro-storm">0.00</span> &nbsp; bar at <span id="ro-bar">–</span> m<br>
+  storm <span id="ro-storm">0.00</span> &nbsp; breakpoint <span id="ro-bar">–</span> m<br>
   Q peak <span id="ro-qpk">–</span> m&sup3;/s &nbsp; net <span id="ro-qnet">–</span> m&sup3;/s<br>
   <span id="ro-ls">–</span><br>
   <span id="ro-conv">–</span>
@@ -1258,9 +1308,9 @@ registerModel({
         modelDaysPerSec = parseFloat(this.value);
         document.getElementById('mrate-val').textContent = modelDaysPerSec.toFixed(1);
       });
-      document.getElementById('m-relax').addEventListener('input', function(){
-        relaxDays = parseFloat(this.value);
-        document.getElementById('relax-val').textContent = relaxDays.toFixed(0);
+      document.getElementById('m-dune').addEventListener('input', function(){
+        duneRate = parseFloat(this.value);
+        document.getElementById('dune-val').textContent = duneRate.toFixed(0);
       });
       document.getElementById('m-long').addEventListener('input', function(){
         longshoreGain = parseFloat(this.value);

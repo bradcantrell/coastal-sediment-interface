@@ -167,6 +167,7 @@ const TRANSPORT_HREF = 1.5;
 // does not move; mobility falls linearly to zero over the outer half of that depth. XBeach's
 // deposit ends at 2.8 m depth in the calm run and 4 to 5.4 m in the storm runs. Without this
 // the eroded sand spread as a thin film over the whole seabed out to the offshore edge.
+const CLOSURE_FADE_END = 1.25;   // mobility reaches zero at this multiple of the closure depth
 const CLOSURE_BASE_M = 2.0;
 
 const CLOSURE_PER_HS = 0.8;
@@ -722,7 +723,12 @@ function morphologyStep(dtModel) {
       act[gx] = 1;
       // Mobility: 1 down to half the depth of closure, then linearly to 0 at closure.
       const depth = conditions.waterLevel - z;
-      mob[gx] = depth <= 0.5 * hClose ? 1 : Math.max(0, (hClose - depth) / (0.5 * hClose));
+      // The cube, and out to CLOSURE_FADE_END x the closure depth: a straight fade to zero at
+      // the closure depth itself left a ledge there. At storm rates even a tenth of full
+      // mobility spreads sand 30 m in ten days, so the last mobile cells filled as high as
+      // the rest and the next cell out stayed empty. XBeach's deposit tapers off over 60 m.
+      const fade = Math.max(0, Math.min(1, (CLOSURE_FADE_END * hClose - depth) / ((CLOSURE_FADE_END - 0.5) * hClose)));
+      mob[gx] = fade * fade * fade;
       any = true;
     }
     if (!any) continue;

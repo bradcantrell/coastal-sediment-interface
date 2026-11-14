@@ -112,8 +112,9 @@ the numbers and the reasons; do not undo one without reading its entry there.
 - **The target follows the live water level.** `shoreRefAt()` re-derives the waterline, from
   the bed without the morphology layer, whenever the water level changes. Taking it from the
   evolving bed makes the target chase the bed and diverge.
-- **Depth of closure.** Sand moves only shoreward of `2.0 + 0.8 * Hs` m of water; mobility is 1
-  to half that depth and falls linearly to 0. Each face uses the smaller mobility of its two
+- **Depth of closure.** `2.0 + 0.8 * Hs` m of water. Mobility is 1 to half that depth, then
+  falls as a cube to 0 at 1.25 times it. A straight fade to 0 at the closure depth left a
+  ledge at the seaward end of the deposit. Each face uses the smaller mobility of its two
   cells from both sides, which is what keeps the step conservative.
 - **Rate.** `TRANSPORT_D0 = 0.0023` m2/s at 1.5 m waves, linear in Hs. A storm response takes
   model days to weeks.
@@ -140,7 +141,9 @@ reported only, because XBeach erodes a calm beach and this model holds it still 
     SCORE=probes.json node dev/headless_harness.js index.html     # about 5 minutes on vlmars
     python3 dev/precision_score.py probes.json
 
-- Composite 72.3 (70.8 before bar position was scored on the deposit centre, `29adbbc`). Mean profile error over the six runs 0.091 m.
+- Composite 80.2. The basis changed twice on 2026-11-14 with the model unchanged: bar position
+  scored on the deposit centre (70.8 -> 72.3), then the probes run on a bed actually cleared
+  of particle deposit (72.3 -> 80.6). Compare only like with like; `dev/PRECISION.md` has it. Mean profile error over the six runs 0.091 m.
 - Storm case: correlation 0.99, peak amplitude 0.90 of XBeach's, deposit 41 against 46 m2/m.
 - The transport rate, closure depth and wave reach are fitted to these runs, which share one
   bed and one grain size. Say so when quoting agreement.
@@ -187,7 +190,7 @@ zero, so the bed does not lurch on load.
 ## Testing
 
 ```
-node dev/headless_harness.js index.html      # the coastal model and the export: 89 checks
+node dev/headless_harness.js index.html      # the coastal model and the export: 90 checks
 node dev/interface_harness.js index.html     # the shared interface under this model: 42 checks
 ```
 

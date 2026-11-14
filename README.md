@@ -40,7 +40,7 @@ See `PLAN.md` for the full design and the phase gates.
 | Wave input | 1 component (monochromatic) or 7 wrapped-Gaussian directional bins |
 | Profile | Dean h = A·y^(2/3), A from Soulsby (1997) settling velocity |
 | Storm profile | Dean with its slope capped at 0.023 (1 in 43), the line XBeach cuts across the waterline |
-| Cross-shore | Conservative diffusion of the bed's distance from that profile, out to a depth of closure of 2 m + 0.8·Hs |
+| Cross-shore | Conservative diffusion of the bed's distance from that profile, fading out around a depth of closure of 2 m + 0.8·Hs |
 | Dune | Waves cut up to 0.15·Hs above the water; behind that the bed slumps at 0.3 (wet) or 1.0 (dry) |
 | Longshore | CERC, Q = K/(16(s−1))·Hb^2.5/√γ·sin(2αb) |
 | Bed change | dz/dt = −(1/(1−p))·(dQ/dy)/W_active |
@@ -137,7 +137,7 @@ What does not agree:
 - **How fitted it is.** The transport rate, the depth of closure and the wave reach are fitted
   to these six runs, which share one bed and one grain size.
 
-The composite precision score is 72.3 out of 100. Three further runs on a second beach (0.5 mm sand, steeper seabed), to which nothing was fitted, give a mean profile error of 0.11 m. `dev/PRECISION.md` records every score with
+The composite precision score is 80.2 out of 100. Three further runs on a second beach (0.5 mm sand, steeper seabed), to which nothing was fitted, give a mean profile error of 0.11 m. `dev/PRECISION.md` records every score with
 its commit and the reason it moved. Regenerate a reference with `dev/build-xbeach-msys2.sh`,
 a case from the export panel, `xbeach.exe` in that directory, and `dev/record_xbeach.py`.
 
@@ -228,7 +228,7 @@ equal morphological time (10 d): correlation 0.986 over 55 cells
 amplitude at equal time: 1.614 vs xbeach 1.792 m (ratio 0.90)
 ```
 
-89 checks. 88 pass on vlmars; the one failure is a frame-time limit recorded on a faster
+90 checks. 89 pass on vlmars; the one failure is a frame-time limit recorded on a faster
 machine.
 
 Note: extracting the script and running `node --check` alone is **not** sufficient — it

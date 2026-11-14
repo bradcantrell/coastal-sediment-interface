@@ -662,6 +662,11 @@ check(early.Y < 0.6 * barDistStorm, "the young bar sits inside the surf zone, no
 // Beyond the depth of closure the bed must not move at all. The old model laid a 0.1 m film
 // out to the offshore edge of the grid.
 check(farRise < 0.005, "no sand reaches the seabed beyond the depth of closure", `${farRise.toFixed(4)} m`);
+// And it must fade out, not stop. With mobility falling in a straight line to zero at the
+// closure depth the deposit ended in a ledge, 0.155 m in 2 m here: the last mobile cells
+// filled as high as the rest. With the cubic fade it is 0.009 m. 0.03 m in 2 m is a slope
+// change of 1.5%, about what the seabed itself has at that depth.
+check(ledge < 0.03, "the deposit fades out toward the depth of closure, with no ledge", `${ledge.toFixed(3)} m in 2 m, ${ledgeAt} m offshore`);
 
 console.log(`        after 125 calm days: +${atCrest.toFixed(2)} m where the 10-day crest was (${(atCrest - early.rise).toFixed(2)}), highest +${after.rise.toFixed(2)} m at ${after.Y} m; upper profile ${zUpper10.toFixed(2)} -> ${zUpperCalm.toFixed(2)} m`);
 check(atCrest < early.rise - 0.02, "bar decays after the storm", `${(atCrest - early.rise).toFixed(2)} m at the crest`);

@@ -711,3 +711,36 @@ cancel. Compare scores across this line only on the same basis.
 
 Score history on a like-for-like basis is now: step 3 start 55.8, end 70.8 (lumpy bed, crest
 measure); 72.3 (lumpy bed, centre measure); 80.6 (clean bed, centre measure).
+
+## The deposit fades out instead of ending in a ledge: 80.2
+
+Model change. 80.6 -> 80.2 on the clean-bed basis.
+
+The second beach showed the deposit ending in a step at the depth of closure (+0.46 m, then
+nothing 15 m further out), and a browser look showed the same hard edge on the first beach,
+175 m offshore. Mobility fell in a straight line from 1 at half the closure depth to 0 at the
+closure depth. At storm rates a tenth of full mobility still spreads sand 30 m in ten days,
+so the last mobile cells filled as high as the rest.
+
+Mobility now falls as a cube, reaching 0 at 1.25 times the closure depth
+(`CLOSURE_FADE_END`). Chosen from four forms in a scratch copy on the first-beach cases
+(straight, square, cube to 1.25, square from a quarter depth); the second beach was looked at
+afterwards and not used to choose.
+
+| | Straight fade | Cubic fade |
+|---|---|---|
+| Composite | 80.6 | 80.2 |
+| Profile rmse, five scored cases (sub-score) | 0.68 | 0.70 |
+| Peak accretion (sub-score) | 0.59 | 0.64 |
+| Deposit centre (sub-score) | 0.52 | 0.43 |
+| Mean rmse, three second-beach cases (m) | 0.113 | 0.107 |
+| Steepest seaward end of the deposit after a 100-day storm | 0.155 m in 2 m | 0.009 m in 2 m |
+| Second-beach storm, deposit at x = 330 / 315 / 300 m (XBeach 0.44 / 0.31 / 0.17) | 0.48 / 0.00 / 0.00 | 0.32 / 0.09 / 0.00 |
+| Sand left offshore after a 10-day storm and 125 calm days | +0.15 m | +0.08 m |
+
+The composite goes down 0.4 because the deposit centre moves about 4 m landward in each
+case: the far tail is thinner. It is kept because the ledge is a visible artefact and every
+profile measure improves. The taper is still steeper than XBeach's.
+
+One check added (90 in all): "the deposit fades out toward the depth of closure, with no
+ledge" fails on the straight fade (0.155 m).

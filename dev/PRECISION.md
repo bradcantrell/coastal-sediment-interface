@@ -252,3 +252,65 @@ Two things this shows that were not written down before:
 - The harness's frame-time check ("no worse than the recorded 38 ms") is a record from
   vlio. On vlmars under node the same tree measures 78.7 ms per frame before the move and
   81.6 after. It fails on vlmars at every commit and is not a regression signal there.
+
+
+---
+
+## The edge row, and an honest baseline: 54.5 (2026-11-13)
+
+62.7 was partly an artefact. Removing it is a bug fix, not a model change, and the score
+falls 8.2 points because the artefact had been flattering the storm case.
+
+**The bug.** `morphZ()` and `longZ()` returned zero past the outermost cell centre. The last
+grid row (centre at y = 802 px on an 800 px canvas) therefore never saw its own bed change.
+In a storm the cross-shore step kept relaxing a bed that, to it, never moved. Its eroding
+cells hit the −300 clamp (15 m), its accreting cells kept filling, and the row gained sand
+without limit: 3095 m² per metre of shore after a 10-day storm, where a real row moves 36.
+The existing conservation check runs calm conditions, where the row drifts but does not
+reach the clamp, so it passed throughout.
+
+**How it reached the score.** `runProfile()` averages the bed over 41 alongshore samples. The
+last one sits at y = 800 px, half way between the last real row and the runaway row. So
+1/82 of a row holding ±15 m went into every point of the scored profile. That put a false
++0.17 m shelf across the surf zone and deepened the scored erosion.
+
+**The fix.** Both layers now hold their edge value past the outermost cell centre. Two checks
+in `dev/headless_harness.js` cover it (a 10-day storm neither makes nor loses sand in any
+row; the edge row follows its neighbour), and both fail on the old `model.js`.
+
+                 before (62.7)                          after (54.5)
+    storm     rmse 0.223 | barpos 100 | ero 0.14 | acc 0.01    rmse 0.241 | barpos 100 | ero 0.22 | acc 0.52
+    moderate  rmse 0.104 | barpos  95 | ero 0.50 | acc 0.39    rmse 0.115 | barpos  95 | ero 0.66 | acc 0.55
+
+Every other probe is unchanged (calm drift, seeded disequilibrium 0.0338, flux, CERC, volume).
+
+What the clean numbers say about the model, which the artefact was hiding:
+
+- The storm bar is +0.16 m, not +0.34 m. The "accretion 0.01" match to XBeach was the
+  artefact landing on XBeach's number.
+- The model conserves sand: a storm row erodes and deposits 34 m² per metre. XBeach deposits
+  35 and erodes 66 in its alongshore mean, so XBeach is the one losing sand from the profile.
+- The deposit is in the wrong place by far more than the crest metric shows. See below.
+
+**Deposit centre of mass, reported and not scored.** `precision_score.py` now prints where the
+centre of everything deposited sits, next to the crest position. The crest is the single
+highest sample of a profile with a long flat top, so it jumps. The centre of mass does not.
+
+    storm     model x = 185 m, XBeach 374 m (189 m apart) | deposited 33.7 m²/m, XBeach 35.3
+    moderate  model x = 169 m, XBeach 346 m (176 m apart) | deposited  7.8 m²/m, XBeach 15.5
+
+x runs from the offshore edge (0) to the dune (600 m); the still-water shoreline is near
+445 m. The model spreads its eroded sand as a film about 0.1 m thick over the whole seabed
+out to the offshore edge. XBeach keeps it within about 100 m of the shoreline.
+
+**XBeach's bar through time** (from the 81 slices already in the two 10-day runs on vlio,
+`D:/workspace/xb-storm-long` and `xb-case2-long`):
+
+    storm     day 1: crest x 430, centre 405, deposited 13.6   day 5: 400, 383, 26.6   day 10: 390, 374, 35.3
+    moderate  day 1: crest x 425, centre 382, deposited  5.3   day 5: 390, 361, 11.7   day 10: 370, 346, 15.5
+
+The deposit starts at the shoreline and moves seaward about 3 to 4 m a day while it grows. It
+never comes from the breakpoint.
+
+A latent order dependence found on the way: the calm probes read the storm intensity left by
+the last morphology step. The storm budget check is therefore skipped under `SCORE=`.

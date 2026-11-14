@@ -970,6 +970,44 @@ if (process.env.PRECISION_DUMP) {
 
 
 // ============================================================ precision probes
+// --- Storm sand budget, every row including the off-canvas edge row.
+// The calm conservation check above passed for months while the last grid row ran away in a
+// storm: morphZ() read zero past the outermost cell centre, so that row never saw its own
+// change, kept relaxing until its eroding cells hit the clamp, and then gained sand without
+// limit. Half of it leaked into the alongshore-mean profile the precision score reads.
+// Not run while scoring: the calm probes below read the storm intensity left by the last
+// morphology step, so a storm run placed here would change what they measure.
+if (!process.env.SCORE) {
+  const condKeep = Object.assign({}, app.cond);
+  const morphKeep = Float32Array.from(app.getState().morph);
+  runProfile(STORM_COND, 10);
+  const g = app.getState().morph, gw = D.gw, gh = D.gh;
+  const cellM = (D.cross / width) * 4;
+  let worstNet = 0, moved = 0, edgeGap = 0;
+  for (let r = 0; r < gh; r++) {
+    let net = 0, pos = 0;
+    for (let c = 0; c < gw; c++) { const v = g[r * gw + c]; net += v; if (v > 0) pos += v; }
+    if (Math.abs(net) > Math.abs(worstNet)) worstNet = net;
+    moved = Math.max(moved, pos);
+  }
+  for (let c = 0; c < gw; c++) {
+    edgeGap = Math.max(edgeGap, Math.abs(g[(gh - 1) * gw + c] - g[(gh - 2) * gw + c]));
+  }
+  const toM2 = D.mpbu * cellM;
+  check(moved * toM2 > 5, "a 10-day storm moves sand", `${(moved * toM2).toFixed(1)} m2 per metre of shore`);
+  // 0.05 m2/m is a seven-hundredth of what a row moves; float32 accumulation over 400 steps
+  // measures about a thousandth of that.
+  check(Math.abs(worstNet) * toM2 < 0.05, "a storm neither makes nor loses sand in any row",
+        `worst row net ${(worstNet * toM2).toFixed(4)} m2/m`);
+  check(edgeGap * D.mpbu < 0.25, "the off-canvas edge row follows its neighbour in a storm",
+        `largest gap ${(edgeGap * D.mpbu).toFixed(3)} m`);
+  Object.assign(app.cond, condKeep);
+  if (app.waveFieldStep) app.waveFieldStep(0.1);
+  if (app.computeBarDist) app.computeBarDist();
+  app.morphStep(1e-6);                       // puts the storm intensity back to these conditions
+  app.getState().morph.set(morphKeep);
+}
+
 if (process.env.SCORE) {
   const fs = require("fs");
   const out = {};

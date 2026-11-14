@@ -81,9 +81,12 @@ function bedZ0(x, y) { return userBedZ(x, y) + depoZ(x, y); }
 // deposition is clamped to [0, DEPO_MAX] and cannot represent erosion.
 function morphZ(x, y) {
   if (!morphGrid) return 0;
-  let fx = x / DEPO_CELL - 0.5, fy = y / DEPO_CELL - 0.5;
-  let i = Math.floor(fx), j = Math.floor(fy);
-  if (i < 0 || j < 0 || i >= GW - 1 || j >= GH - 1) return 0;
+  // Past the outermost cell centres the layer holds its edge value. It used to read zero
+  // there, so the last row and column never saw their own change: the cross-shore step kept
+  // relaxing a bed that, to it, never moved, until that row hit the clamp.
+  let fx = Math.min(Math.max(x / DEPO_CELL - 0.5, 0), GW - 1);
+  let fy = Math.min(Math.max(y / DEPO_CELL - 0.5, 0), GH - 1);
+  let i = Math.min(Math.floor(fx), GW - 2), j = Math.min(Math.floor(fy), GH - 2);
   let tx = fx - i, ty = fy - j;
   let a = morphGrid[j * GW + i],     b = morphGrid[j * GW + i + 1];
   let c = morphGrid[(j + 1) * GW + i], d = morphGrid[(j + 1) * GW + i + 1];
@@ -95,9 +98,12 @@ function morphZ(x, y) {
 // cannot erode accretion that longshore transport deposited.
 function longZ(x, y) {
   if (!longGrid) return 0;
-  let fx = x / DEPO_CELL - 0.5, fy = y / DEPO_CELL - 0.5;
-  let i = Math.floor(fx), j = Math.floor(fy);
-  if (i < 0 || j < 0 || i >= GW - 1 || j >= GH - 1) return 0;
+  // Past the outermost cell centres the layer holds its edge value. It used to read zero
+  // there, so the last row and column never saw their own change: the cross-shore step kept
+  // relaxing a bed that, to it, never moved, until that row hit the clamp.
+  let fx = Math.min(Math.max(x / DEPO_CELL - 0.5, 0), GW - 1);
+  let fy = Math.min(Math.max(y / DEPO_CELL - 0.5, 0), GH - 1);
+  let i = Math.min(Math.floor(fx), GW - 2), j = Math.min(Math.floor(fy), GH - 2);
   let tx = fx - i, ty = fy - j;
   let a = longGrid[j * GW + i],       b = longGrid[j * GW + i + 1];
   let c = longGrid[(j + 1) * GW + i], d = longGrid[(j + 1) * GW + i + 1];

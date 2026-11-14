@@ -56,10 +56,22 @@ def case_scores(dz, xb, dx):
     A_j = xb.index(A_b)
 
     barpos = abs(a_j * dx - A_j * dx)
+
+    # Reported, not scored. The crest above is the single highest sample, and both profiles
+    # have long flat tops, so it jumps: two unrelated sediment fixes moved it 15 m. The centre
+    # of mass of everything deposited is steadier and says where the sand went.
+    def centroid(p):
+        w = [max(v, 0.0) for v in p[:n]]
+        return sum(i * dx * v for i, v in enumerate(w)) / max(sum(w), 1e-9)
+    cen_model, cen_xb = centroid(dz), centroid(xb)
+    dep_model = sum(max(v, 0.0) for v in dz[:n]) * dx
+    dep_xb = sum(max(v, 0.0) for v in xb[:n]) * dx
     ero = abs(e_b - E_b) / max(abs(E_b), 1e-6)
     acc = abs(a_b - A_b) / max(abs(A_b), 1e-6)
     return {
         "rmse": rmse, "barpos": barpos, "erosion": ero, "accretion": acc,
+        "centroid_err": abs(cen_model - cen_xb), "centroid_model": cen_model,
+        "centroid_xb": cen_xb, "deposit_model": dep_model, "deposit_xb": dep_xb,
         "profile": clamp01(1 - rmse / TOL["profile_rmse_m"]),
         "barpos_s": clamp01(1 - barpos / TOL["barpos_m"]),
         "erosion_s": clamp01(1 - ero / TOL["erosion_rel"]),
@@ -96,7 +108,9 @@ def score(probes, refs):
         "cerc_r2": round(probes["cerc_r2"], 5),
         "vol_drift": probes["vol_drift"],
         "cases": {n: {k: round(v, 4) for k, v in c.items()
-                      if k in ("rmse", "barpos", "erosion", "accretion")} for n, c in cases},
+                      if k in ("rmse", "barpos", "erosion", "accretion", "centroid_err",
+                               "centroid_model", "centroid_xb", "deposit_model",
+                               "deposit_xb")} for n, c in cases},
     }
     total = sum(s.values()) / len(s) * 100
     return s, measured, total, cases
@@ -133,6 +147,9 @@ def main():
     for name, c in cases:
         print(f"    {name:9} rmse {c['rmse']:.3f} m | barpos {c['barpos']:4.0f} m | "
               f"ero {c['erosion']:5.2f} | acc {c['accretion']:5.2f}")
+        print(f"    {'':9} deposit centre x {c['centroid_model']:.0f} m, XBeach {c['centroid_xb']:.0f} m "
+              f"({c['centroid_err']:.0f} m apart) | deposited {c['deposit_model']:.1f} m2/m, "
+              f"XBeach {c['deposit_xb']:.1f}   [reported, not scored]")
     for key, label in (("profile", "profile rmse"), ("barpos", "bar position"),
                        ("erosion", "peak erosion"), ("accretion", "peak accretion")):
         print(f"    mean {label:16} score {s[key]:5.2f}")

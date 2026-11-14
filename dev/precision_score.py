@@ -40,7 +40,11 @@ TOL = {
     "accretion_rel":   0.60,   # relative error in peak accretion height
 }
 
-SCORED_EXTRA = ("normal", "nosurge", "mid")   # see score(); "calm" is reported only
+# see score(); "calm" is reported only. The three "coarse" cases are the second beach (0.5 mm
+# sand). They were scored from 2026-11-14 at Brad's decision; nothing had been fitted to them
+# at that point. Once they are in the score, changes will be tuned against them, so they stop
+# being an independent test. A new test needs a new beach.
+SCORED_EXTRA = ("normal", "nosurge", "mid", "coarse-storm", "coarse-moderate", "coarse-mid")
 
 W = {  # equal weight by default; these are separate failure modes, not one thing
     "calm_rate": 1.0, "calm_settle": 1.0, "flux": 1.0, "cerc": 1.0, "volume": 1.0,
@@ -88,8 +92,8 @@ def case_scores(dz, xb, dx):
 
 
 def score(probes, refs):
-    # Five XBeach cases are scored and averaged: the storm, the moderate case, and three more
-    # on the same bed (shore-normal waves, no surge, mid energy). Only the storm case was
+    # Eight XBeach cases are scored and averaged: the storm, the moderate case, three more on
+    # the same bed (shore-normal waves, no surge, mid energy), and three on a second beach. Only the storm case was
     # used for calibration until 2026-11-14, and a change that helps the storm and hurts the
     # others is not an improvement, it is a fit. Two cases let that hide: a trial terrace
     # target halved the storm error while doubling the moderate one.

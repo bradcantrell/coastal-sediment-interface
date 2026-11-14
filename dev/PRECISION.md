@@ -794,3 +794,36 @@ near the berm top gave the wind rule a cell to fill on an uncut bed. The block n
 the deposit first and puts it back after. Three runs in a row give the same figures: 29.6
 m2/m missing after the storm, 5.9 after two calm years with the wind off, 0.0 with it on.
 The dune checks still fail on the even-fill model.
+
+## Eight scored cases: 80.4
+
+The three second-beach runs (0.5 mm sand) move from reported to scored. Brad's decision,
+2026-11-14. Model unchanged (`0c0988d`): 80.2 on five cases, 80.4 on eight.
+
+| Sub-score | Five cases | Eight cases |
+|---|---|---|
+| profile rmse | 0.70 | 0.68 |
+| deposit centre | 0.43 | 0.39 |
+| peak erosion | 0.52 | 0.60 |
+| peak accretion | 0.64 | 0.65 |
+
+Nothing had been fitted to the second beach when it went into the score. From here on it
+will be, so it is no longer an independent test; the next one needs a new beach.
+
+### What the no-surge case is really measuring
+
+The no-surge case has the worst profile error of the eight (0.161 m; the model deposits 15
+m2/m where XBeach deposits 43). Splitting XBeach's own sand budget by zone, middle rows:
+
+| | Eroded offshore of x = 250 m | Eroded from beach and dune | Deposited in the bar | Net |
+|---|---|---|---|---|
+| no surge | 23.4 | 11.4 | 40.4 | +8.2 |
+| storm | 8.2 | 44.5 | 44.4 | -7.4 |
+| normal | 2.8 | 41.4 | 46.5 | +9.2 |
+
+In the no-surge run only 11.4 m2/m of XBeach's 40 m2/m bar comes from the beach. The model
+takes 14.5 from the beach, which is close. The rest of XBeach's bar is 23 m2/m scoured from
+the seabed next to its offshore wave boundary (0.35 m deep at x = 30 m, in 7 m of water) and
+about 8 m2/m that arrives alongshore. Scour at a wave-generating boundary is a property of
+the XBeach setup, not of a beach. So most of this case's error is the reference, and it
+should not be chased by making the model erode deep water.

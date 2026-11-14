@@ -139,21 +139,24 @@ returning.
 
 The exported case builds and runs. The model is scored against six recorded XBeach runs on
 the same bed, 10 model days each (`dev/xbeach-reference*.json`, written by
-`dev/record_xbeach.py` from the middle rows 12 to 28). Five are scored; the calm run is
+`dev/record_xbeach.py` from the middle rows 12 to 28). Eight runs are scored (five here, three on a second beach); the calm run is
 reported only, because XBeach erodes a calm beach and this model holds it still by design.
 
     SCORE=probes.json node dev/headless_harness.js index.html     # about 5 minutes on vlmars
     python3 dev/precision_score.py probes.json
 
-- Composite 80.2. The basis changed twice on 2026-11-14 with the model unchanged: bar position
+- Composite 80.4 on eight cases (80.2 on the first five). The basis changed twice on 2026-11-14 with the model unchanged: bar position
   scored on the deposit centre (70.8 -> 72.3), then the probes run on a bed actually cleared
   of particle deposit (72.3 -> 80.6). Compare only like with like; `dev/PRECISION.md` has it. Mean profile error over the six runs 0.091 m.
 - Storm case: correlation 0.99, peak amplitude 0.90 of XBeach's, deposit 41 against 46 m2/m.
 - The transport rate, closure depth and wave reach are fitted to these runs, which share one
   bed and one grain size. Say so when quoting agreement.
-- Three more runs on a second beach (0.5 mm sand, steeper seabed) are reported and not
-  scored: `dev/xbeach-reference-coarse-*.json`. Nothing was fitted to them; mean rmse 0.11 m.
-  Keep them unfitted, or they stop being a test.
+- Three more runs on a second beach (0.5 mm sand, steeper seabed) are scored since
+  2026-11-14: `dev/xbeach-reference-coarse-*.json`. Nothing had been fitted to them at that
+  point (mean rmse 0.11 m). They are no longer an independent test; the next needs a new beach.
+- The no-surge case's error is mostly the reference: 23 of the 40 m2/m in XBeach's bar is
+  scoured from beside its offshore wave boundary. Do not make the model erode deep water to
+  match it.
 - To make a new case: `XB_CASE='{"Hs":2.7,"d50":0.5,...}' XB_OUT=dir node dev/headless_harness.js
   index.html` writes the XBeach inputs and `conditions.json`; run XBeach in that folder; then
   `python3 dev/record_xbeach.py dir 86400 10 dev/xbeach-reference-NAME.json dir/conditions.json`.

@@ -137,7 +137,7 @@ What does not agree:
 - **How fitted it is.** The transport rate, the depth of closure and the wave reach are fitted
   to these six runs, which share one bed and one grain size.
 
-The composite precision score is 80.2 out of 100. Three further runs on a second beach (0.5 mm sand, steeper seabed), to which nothing was fitted, give a mean profile error of 0.11 m. `dev/PRECISION.md` records every score with
+The composite precision score is 80.4 out of 100 over eight runs, three of them on a second beach (0.5 mm sand, steeper seabed) to which nothing had been fitted when they were added; those three give a mean profile error of 0.11 m. `dev/PRECISION.md` records every score with
 its commit and the reason it moved. Regenerate a reference with `dev/build-xbeach-msys2.sh`,
 a case from the export panel, `xbeach.exe` in that directory, and `dev/record_xbeach.py`.
 

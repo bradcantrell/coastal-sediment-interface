@@ -461,3 +461,50 @@ The calm XBeach case stays reported and is not scored. XBeach cuts 0.6 m into th
 
 Peak erosion scores 0.00 and peak accretion 0.02 across the five: the model moves about half
 the sand XBeach does in every case. That is what step 3 is for.
+
+## The storm target is Dean with its slope capped: 69.4
+
+Stage 4 step 3, first of three changes. Score 55.8 -> 69.4 on the five scored cases.
+
+**What was wrong.** The model matched XBeach's eroded volume on day 1 of the storm (13.4
+against 14.5 m2 per metre of shore) and then stalled at 22.8 by day 10, while XBeach reached
+53 and was still climbing. The transport rate was not the limit. The target was: the old
+storm target (the beach slope reduced by up to 55% plus a 1.2 m scarp decaying over 18 m)
+left the upper beach too high, and once the bed reached it nothing more moved.
+
+**What XBeach does.** In all six reference runs the final nearshore bed is one straight line
+at 0.021 to 0.024, from about 1.6 m of water up to the foot of a scarp, whatever the wave
+height or surge. That is the Dean curve with its slope capped: Dean out to where its own
+slope falls to the cap, and the tangent line landward of that.
+
+**The change.** `equilibriumZ()` is now that profile under storm waves (`TERRACE_SLOPE`
+0.023), blended with the seeded calm profile by storm intensity so that calm is exactly
+unchanged. `stormIntensity()` is now wave height only, 0 at 1.2 m and 1 from 2.0 m. A surge
+acts through the water level, not through that number.
+
+| | Before | After |
+|---|---|---|
+| Score | 55.8 | 69.4 |
+| Peak erosion sub-score | 0.00 | 0.56 |
+| Peak accretion sub-score | 0.02 | 0.58 |
+| storm rmse (m) | 0.232 | 0.104 |
+| normal rmse | 0.215 | 0.076 |
+| nosurge rmse | 0.173 | 0.167 |
+| mid rmse | 0.111 | 0.134 |
+| moderate rmse | 0.098 | 0.190 |
+| all six, mean rmse | 0.152 | 0.125 |
+
+**What got worse, and why.** The moderate case nearly doubles its error and mid rises. The
+model cuts every cell of the active beach at once, right up to its fixed 1.5 m limit. XBeach
+works from the waterline inland behind a scarp, and at 2.0 m waves the scarp has only
+reached the 1.1 m contour by day 10. Day 1 is also too fast everywhere (storm 20 against
+14 m2/m). The second change, wave reach and the dune slump, is aimed at exactly this.
+
+**How fitted it is.** One number, 0.023, read off the reference runs rather than swept. The
+0 to 1 range over 1.2 to 2.0 m is not fitted to anything between its ends: the lower end is
+the design rule that a calm beach stays still, and the upper end is the smallest wave height
+at which a reference run shows the full terrace.
+
+Two checks added (86 in all). "The storm target is a 1 in 43 terrace across the waterline"
+fails on the old model (0.035). "The calm target keeps the seeded beach" fails when the calm
+beach slope in the target is changed to 0.09.

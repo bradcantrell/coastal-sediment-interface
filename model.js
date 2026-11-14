@@ -151,6 +151,8 @@ const BERM_TOP_M     = 1.5;   // metres above still water: top of the active bea
 // inside the first model day; six XBeach runs on this bed are still cutting the beach at day
 // ten, and their deposit spreads seaward about as fast at Hs 2 m as at 3.4 m. This value is
 // set from the storm run's deposit, day by day (dev/PRECISION.md, 2026-11-14).
+const TERRACE_SLOPE = 0.023;   // storm nearshore slope, read off six XBeach runs (0.021 to 0.024)
+const TERRACE_YT_PER_A3 = Math.pow((2 / 3) / TERRACE_SLOPE, 3);   // Dean slope = cap at Y = this * A^3
 const TRANSPORT_D0   = 0.0023;
 
 const TRANSPORT_HREF = 1.5;
@@ -504,13 +506,17 @@ function deanA(d50mm) {
 }
 
 
-/** Storm intensity 0..1 from wave height and water level. */
+/**
+ * Storm intensity 0..1: how far the waves have flattened the nearshore target (see
+ * equilibriumZ). 0 at the default 1.2 m and below, so a calm beach is at rest; 1 from 2.0 m.
+ * Wave height only. A surge acts through the water level itself, not through this number:
+ * it used to add up to 0.4 here, which made a surge with no waves cut the beach.
+ * XBeach cuts its terrace under 1.2 m waves too (dev/xbeach-reference-calm.json). Holding a
+ * calm beach still is a design rule of this model, so the range starts above that.
+ */
+const STORM_HS_CALM = 1.2, STORM_HS_FULL = 2.0;
 function stormIntensity() {
-  const byWave  = (conditions.Hs - 1.5) / 2.5;
-  const byLevel = (conditions.waterLevel - 0.3) / 1.2;
-  const a = Math.max(0, Math.min(1, byWave))   * 0.6;
-  const b = Math.max(0, Math.min(1, byLevel)) * 0.4;
-  return a + b;
+  return Math.max(0, Math.min(1, (conditions.Hs - STORM_HS_CALM) / (STORM_HS_FULL - STORM_HS_CALM)));
 }
 
 
@@ -542,21 +548,21 @@ function equilibriumZ(Y, storm, A) {
   // otherwise lift the landward target by exactly the amount the storm lowers it, and
   // erosion could never appear.
   const wl = refWaterLevel;
-  if (Y >= 0) {
-    // cbrt(Y*Y) rather than pow(Y, 2/3): this runs once per cell per frame and Math.pow with a
-    // fractional exponent goes through exp/log. Same value, cheaper.
-    // Dean, and nothing else. There used to be a bump drawn into this target at the
-    // breakpoint. XBeach never builds a bar there: in all six reference runs the bar starts at
-    // the shoreline and moves seaward as it grows. The bar now comes from the eroded beach
-    // sand, which morphologyStep keeps inside the depth of closure.
-    return wl - A * Math.cbrt(Y * Y);
-  }
-  // Landward: the beach gradient this profile is built from, cut back by storm energy.
-  // conditions.slope is NOT used here — that is the runup foreshore gradient, a different
-  // quantity. Using it dragged a 12% dune toward a 2% ramp.
-  const slope = BEACH_SLOPE * (1 - 0.55 * storm);
-  const cut   = storm * 1.2 * Math.exp(-Math.abs(Y) / 18);   // storm scarp
-  return wl + slope * (-Y) - cut;
+  // The Dean curve, with its slope capped. Dean steepens without limit toward the waterline;
+  // under storm waves the bed cannot hold that. In all six XBeach reference runs the final
+  // nearshore bed is one straight line at about 0.023 (1 in 43), from roughly 1.6 m of water
+  // up to the foot of the scarp, whatever the wave height or surge. So the storm target is
+  // Dean out to where Dean's own slope falls to the cap, and the tangent line landward of
+  // that, on up the beach. Sand cut from above the line is what builds the bar.
+  // Between calm and storm the target is a blend of the two profiles, so in calm it is
+  // exactly the profile the default bed is seeded with and nothing moves.
+  // cbrt(Y*Y) rather than pow(Y, 2/3): this runs once per cell per frame.
+  const calm = Y >= 0 ? wl - A * Math.cbrt(Y * Y) : wl + BEACH_SLOPE * (-Y);
+  if (storm <= 0) return calm;
+  const Yt = TERRACE_YT_PER_A3 * A * A * A;           // where the Dean slope equals the cap
+  const cut = Y >= Yt ? wl - A * Math.cbrt(Y * Y)
+                      : wl - A * Math.cbrt(Yt * Yt) + TERRACE_SLOPE * (Yt - Y);
+  return calm + (cut - calm) * storm;
 }
 
 

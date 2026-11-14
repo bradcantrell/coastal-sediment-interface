@@ -608,6 +608,19 @@ console.log(`        upper profile ${zUpper0.toFixed(2)} -> ${zUpper1.toFixed(2)
 console.log(`        bar after 10 d: +${early.rise.toFixed(2)} m at ${early.Y} m offshore; after 100 d: +${late.rise.toFixed(2)} m at ${late.Y} m`);
 console.log(`        largest bed change 350 to 400 m offshore: ${farRise.toFixed(4)} m`);
 
+// The storm target is the Dean curve with its slope capped at the terrace slope XBeach cuts
+// (0.023). Read straight off the target function: it does not depend on the run above.
+{
+  const At = app.deanA(app.cond.d50);
+  const eqRel = (Y, st) => app.eq(Y, st, At) - app.eq(1000, st, At);   // clear of the datum
+  const stormSlope = (eqRel(-20, 1) - eqRel(20, 1)) / 40;
+  const calmSlope  = (eqRel(-20, 0) - eqRel(0, 0)) / 20;
+  const farSame    = Math.abs(eqRel(200, 1) - eqRel(200, 0));
+  console.log(`        target slope across the waterline: storm ${stormSlope.toFixed(4)}, calm beach ${calmSlope.toFixed(3)}; storm vs calm 200 m offshore ${farSame.toFixed(4)} m`);
+  check(Math.abs(stormSlope - 0.023) < 0.001, "the storm target is a 1 in 43 terrace across the waterline", stormSlope.toFixed(4));
+  check(Math.abs(calmSlope - 0.10) < 0.001 && farSame < 1e-9, "the calm target keeps the seeded beach, and deep water is Dean in both", `${calmSlope.toFixed(3)}, ${farSame.toExponential(1)}`);
+}
+
 check(app.getState().storm > 0.3, "storm preset registers as a storm", app.getState().storm.toFixed(2));
 check(zUpper1 < zUpper0, "storm erodes the upper profile", `${(zUpper1 - zUpper0).toFixed(2)} m`);
 // 0.05 m is a rise that is plainly there, not a calibrated height. The model gives 0.08 m

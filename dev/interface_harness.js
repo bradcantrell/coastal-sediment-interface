@@ -1,0 +1,709 @@
+// Headless harness for the shared Sediment Interface.
+// Takes index.html, extracts the inline script that defines setup(), appends model.js and
+// site.js the way the page loads them, mocks p5 + the DOM, then drives the real app and
+// asserts on its own state.
+//
+// This file is shared: every repo that uses the interface runs it unchanged. It checks the
+// interface. What is specific to a model or a site lives next to it:
+//
+//   1. setup() completes            — the bug that once shipped: a TypeError in setup()
+//                                     left the page loaded, the canvas drawn, and the
+//                                     simulation dead, and node --check could not see it
+//   2. the draw loop advances time  — proves the loop body ran, not that a page rendered
+//   3. sediment particles move      — transport is actually running
+//   4. a transect edits the bed     — the editor edits
+//   5. every visible strip is clickable — draw and hit-test share one geometry
+//  5b. the bed editor              — bed mode restores the pause state, a click lands where
+//                                     it is aimed, the model's elevation range is honoured,
+//                                     a cross-section point can be grabbed where it is drawn
+//   6. Space unpauses exactly once  — no double-toggle between keyPressed and the window
+//   7. the model extension point works — the interface steps the model once per frame,
+//                                     mounts its controls, tells it when the bed changes,
+//                                     lets its tool take the pointer, asks it for the scene,
+//                                     and uses each optional hook (bed layers, default bed,
+//                                     non-solid objects, own object kinds, keys, clock,
+//                                     bed rendering, readouts, sediment rules, setup hooks)
+//   8. the model's own checks       — dev/model_checks.js, if there is one
+//   9. the site extension point works — a backend mounts once, runs every frame, gets its
+//                                     keys, and sceneState() describes the drawn scene
+//  10. the site's own checks        — dev/site_checks.js, if there is one
+//  11. nothing has gone non-finite
+//
+// Exits 0 on pass, 1 on any failure, so it can gate a commit.
+//
+//   node dev/headless_harness.js index.html
+//
+// The p5/DOM mock block is adapted from the coastal interface's harness
+// (D:/workspace/coastal_headless_v2.js).
+
+const fs = require("fs");
+const path = require("path");
+
+const HTML = process.argv[2] || "index.html";
+const html = fs.readFileSync(HTML, "utf8");
+
+// The page loads model.js and then site.js after its own script. The harness does the same:
+// both are appended to the inline script, in that order and in the same scope, so the model
+// and the site's backend are loaded and exercised exactly as the page would load them.
+const ROOT = path.dirname(path.resolve(HTML));
+const sibling = (name) => {
+  const want = html.includes('<script src="' + name + '"></script>');
+  const file = path.join(ROOT, name);
+  if (want && !fs.existsSync(file)) console.log(`note: the page loads ${name} but there is none next to it`);
+  return want && fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+};
+const modelSrc = sibling("model.js");
+const siteSrc = sibling("site.js");
+
+// ---------------------------------------------------------------- defaults from the markup
+const DEFAULTS = {};
+// A model's controls are markup inside model.js, so its defaults are read from there too.
+for (const m of (html + modelSrc + siteSrc).matchAll(/id="([^"]+)"[^>]*?value="([^"]*)"/g)) DEFAULTS[m[1]] = m[2];
+// select elements carry no value=; take the first option
+for (const m of html.matchAll(/<select[^>]*id="([^"]+)"[^>]*>([\s\S]*?)<\/select>/g)) {
+  const opt = m[2].match(/value="([^"]*)"/);
+  if (opt && !(m[1] in DEFAULTS)) DEFAULTS[m[1]] = opt[1];
+}
+
+// ---------------------------------------------------------------- p5 / DOM mocks
+const noop = () => {};
+const ctx = () => ({
+  remove: noop,                 // p5.Graphics.remove(), called when a buffer is rebuilt
+  background: noop, clear: noop, fill: noop, stroke: noop, noStroke: noop, noFill: noop,
+  rect: noop, ellipse: noop, line: noop, circle: noop, text: noop, textSize: noop,
+  textAlign: noop, push: noop, pop: noop, translate: noop, rotate: noop, scale: noop,
+  image: noop, beginShape: noop, endShape: noop, vertex: noop, strokeWeight: noop,
+  point: noop, quad: noop, triangle: noop, arc: noop, curve: noop, bezier: noop,
+  curveVertex: noop, bezierVertex: noop, curveTightness: noop, endContour: noop,
+  rectMode: noop, ellipseMode: noop, imageMode: noop, angleMode: noop,
+  strokeCap: noop, strokeJoin: noop, blendMode: noop, tint: noop, noTint: noop,
+  textLeading: noop, textStyle: noop, textWrap: noop,
+  rotateX: noop, rotateY: noop, rotateZ: noop, applyMatrix: noop, resetMatrix: noop,
+  shearX: noop, shearY: noop, erase: noop, noErase: noop,
+  save: noop, restore: noop, createImageData: () => ({ data: new Uint8ClampedArray(4) }),
+  getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(Math.max(1, w * h * 4)) }),
+  putImageData: noop, drawImage: noop,
+  clearRect: noop, fillRect: noop, strokeRect: noop, beginPath: noop, closePath: noop,
+  moveTo: noop, lineTo: noop, arc2: noop, quadraticCurveTo: noop,
+  setTransform: noop, resetTransform: noop, transform: noop, clip: noop,
+  fillText: noop, strokeText: noop, measureText: () => ({ width: 10 }),
+  createLinearGradient: () => ({ addColorStop: noop }),
+  createRadialGradient: () => ({ addColorStop: noop }),
+  createPattern: () => ({}), isPointInPath: () => false,
+  fillStyle: "#000", strokeStyle: "#000", lineWidth: 1, font: "10px sans-serif",
+  globalAlpha: 1, lineCap: "butt", lineJoin: "miter", globalCompositeOperation: "source-over",
+  canvas: { width: 1200, height: 800 },
+});
+
+const els = new Map();
+function el(id) {
+  if (els.has(id)) return els.get(id);
+  const e = {
+    id, textContent: "", innerHTML: "", checked: false,
+    value: id in DEFAULTS ? DEFAULTS[id] : "0",
+    width: 200, height: 120, style: {}, dataset: {},
+    classList: { add: noop, remove: noop, toggle: noop, contains: () => false },
+    addEventListener: noop, removeEventListener: noop, appendChild: noop, removeChild: noop,
+    getContext: () => ctx(), setAttribute: noop, getAttribute: () => null,
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 200, height: 120 }),
+    querySelector: () => el(id + "-child"), querySelectorAll: () => [],
+    focus: noop, blur: noop, scrollTo: noop,
+  };
+  els.set(id, e);
+  return e;
+}
+
+global.__keydown = [];
+global.__keyup = [];
+global.window = {
+  addEventListener: (t, fn) => { if (t === 'keydown') global.__keydown.push(fn); },
+  removeEventListener: noop,
+  innerWidth: 1200, innerHeight: 800, devicePixelRatio: 1,
+  location: { href: "http://localhost/", search: "" },
+  requestAnimationFrame: noop, localStorage: { getItem: () => null, setItem: noop },
+};
+global.document = {
+  getElementById: el, createElement: () => el("created"),
+  addEventListener: noop, removeEventListener: noop,
+  body: el("body"), documentElement: el("html"),
+  querySelector: () => el("q"), querySelectorAll: () => [],
+};
+global.navigator = { userAgent: "node", language: "en" };
+
+
+// ============================================================ software rasterizer (PRECISION=1)
+function makeRaster(w, h) {
+  const buf = new Float32Array(w * h * 4);          // RGBA, 0..255, source-over composited
+  let fillCol = [0, 0, 0, 255], strokeCol = [0, 0, 0, 255];
+  let doFill = true, doStroke = true;
+
+  const norm = (a) => {
+    if (a.length === 1) return [a[0], a[0], a[0], 255];
+    if (a.length === 2) return [a[0], a[0], a[0], a[1]];
+    if (a.length === 3) return [a[0], a[1], a[2], 255];
+    return [a[0], a[1], a[2], a[3]];
+  };
+
+  const px = (x, y, c) => {
+    if (x < 0 || y < 0 || x >= w || y >= h) return;
+    const i = ((y | 0) * w + (x | 0)) * 4;
+    const a = c[3] / 255;
+    if (a <= 0) return;
+    buf[i]     = buf[i]     * (1 - a) + c[0] * a;
+    buf[i + 1] = buf[i + 1] * (1 - a) + c[1] * a;
+    buf[i + 2] = buf[i + 2] * (1 - a) + c[2] * a;
+    buf[i + 3] = Math.min(255, buf[i + 3] + c[3]);
+  };
+
+  const g = {
+    width: w, height: h, _buf: buf,
+    clear() { buf.fill(0); },
+    background(...a) { const c = norm(a); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) px(x, y, c); },
+    fill(...a) { fillCol = norm(a); doFill = true; },
+    noFill() { doFill = false; },
+    stroke(...a) { strokeCol = norm(a); doStroke = true; },
+    noStroke() { doStroke = false; },
+    strokeWeight() {},
+    rect(x, y, ww, hh) {
+      if (!doFill) return;
+      const x0 = Math.round(x), y0 = Math.round(y);
+      const x1 = Math.round(x + ww), y1 = Math.round(y + hh);
+      for (let yy = y0; yy < y1; yy++) for (let xx = x0; xx < x1; xx++) px(xx, yy, fillCol);
+    },
+    point(x, y) { if (doStroke) px(Math.round(x), Math.round(y), strokeCol); },
+    ellipse(x, y, d) { if (doFill) px(Math.round(x), Math.round(y), fillCol); },
+    line(x1, y1, x2, y2) { if (doStroke) { px(x1, y1, strokeCol); px(x2, y2, strokeCol); } },
+    push() {}, pop() {}, translate() {}, rotate() {}, scale() {},
+    image() {}, text() {}, textAlign() {}, textSize() {}, triangle() {}, quad() {},
+    beginShape() {}, endShape() {}, vertex() {}, bezier() {}, arc() {}, curve() {},
+    loadPixels() {}, updatePixels() {},
+  };
+  return g;
+}
+
+globalThis.__rasters = [];
+
+let W = 1200, H = 800;
+Object.defineProperty(global, "windowWidth",  { get: () => W, set: v => W = v });
+Object.defineProperty(global, "windowHeight", { get: () => H, set: v => H = v });
+Object.defineProperty(global, "width",        { get: () => W, set: v => W = v });
+Object.defineProperty(global, "height",       { get: () => H, set: v => H = v });
+
+Object.assign(global, {
+  PI: Math.PI, TWO_PI: Math.PI * 2, HALF_PI: Math.PI / 2,
+  sin: Math.sin, cos: Math.cos, tan: Math.tan, atan2: Math.atan2, asin: Math.asin,
+  sqrt: Math.sqrt, pow: Math.pow, abs: Math.abs, floor: Math.floor, ceil: Math.ceil,
+  round: Math.round, min: Math.min, max: Math.max, exp: Math.exp, log: Math.log,
+  dist: (x1, y1, x2, y2) => Math.hypot(x2 - x1, y2 - y1),
+  radians: d => d * Math.PI / 180, degrees: r => r * 180 / Math.PI,
+  constrain: (v, a, b) => Math.min(Math.max(v, a), b),
+  lerp: (a, b, t) => a + (b - a) * t,
+  map: (v, a, b, c, d) => c + ((v - a) / ((b - a) || 1)) * (d - c),
+  // Under PRECISION the RNG must be seeded: particle deposition is random, and an unstable
+  // bed makes a rendering comparison measure noise instead of the code change.
+  random: (() => {
+    let seed = 12345;
+    const rnd = () => {
+      if (process.env.PRECISION || process.env.SCORE) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+      return Math.random();
+    };
+    return (a, b) => (a === undefined ? rnd() : (b === undefined ? rnd() * a : a + rnd() * (b - a)));
+  })(),
+  noise: () => 0.5, noiseDetail: noop, randomSeed: noop, frameRate: noop,
+  keyIsDown: () => false, key: "", keyCode: 0, mouseIsPressed: false, mouseX: 0, mouseY: 0,
+  mouseButton: "left", touches: [], cursor: noop, noCursor: noop,
+  mag: (x, y) => Math.hypot(x, y), sq: x => x * x, sign: Math.sign,
+  norm: (v, a, b) => (v - a) / ((b - a) || 1), fract: x => x - Math.floor(x),
+  int: v => Math.trunc(v), float: v => parseFloat(v),
+  red: () => 0, green: () => 0, blue: () => 0, alpha: () => 255,
+  color: () => ({ levels: [0, 0, 0, 255] }), lerpColor: () => ({ levels: [0, 0, 0, 255] }),
+  // p5 drawing API, at global scope (the app calls these bare, not on a context)
+  createCanvas: () => ({ parent: noop, style: {}, elt: el("canvas"), id: () => "c" }),
+  pixelDensity: noop, background: noop, noFill: noop, textFont: noop,
+  textWidth: () => 10,
+  createGraphics: (w, h) => {
+    if (process.env.PRECISION) {
+      const g = makeRaster(w || W, h || H);
+      globalThis.__rasters.push(g);
+      return g;
+    }
+    return Object.assign(ctx(), { width: W, height: H });
+  },
+  loadImage: noop, redraw: noop, frameCount: 0, noLoop: noop, loop: noop,
+  resizeCanvas: (w, h) => { W = w; H = h; },
+  clear: noop, fill: noop, stroke: noop, noStroke: noop, strokeWeight: noop,
+  rect: noop, ellipse: noop, line: noop, circle: noop, point: noop, quad: noop,
+  triangle: noop, arc: noop, curve: noop, bezier: noop, image: noop,
+  text: noop, textSize: noop, textAlign: noop, textLeading: noop, textStyle: noop,
+  push: noop, pop: noop, translate: noop, rotate: noop, scale: noop,
+  // drawGhost() styles the 2D context directly for shadow effects; the mock needs one.
+  // drawGhost() and friends drive the 2D context directly. A Proxy no-ops any method and
+  // stores any property, so the mock does not need to enumerate the canvas API.
+  drawingContext: new Proxy({ shadowBlur: 0, shadowColor: "", globalAlpha: 1,
+                              globalCompositeOperation: "source-over",
+                              canvas: { width: 1200, height: 800 } }, {
+    get: (t, k) => (k in t ? t[k] : () => {}),
+    set: (t, k, v) => { t[k] = v; return true; },
+  }),
+  beginShape: noop, endShape: noop, vertex: noop, curveVertex: noop, bezierVertex: noop,
+  curveTightness: noop, endContour: noop, rectMode: noop, ellipseMode: noop,
+  imageMode: noop, angleMode: noop, strokeCap: noop, strokeJoin: noop, blendMode: noop,
+  tint: noop, noTint: noop, applyMatrix: noop, resetMatrix: noop, shearX: noop, shearY: noop,
+  erase: noop, noErase: noop, rotateX: noop, rotateY: noop, rotateZ: noop,
+  CENTER: "center", LEFT: "left", RIGHT: "right", TOP: "top", BOTTOM: "bottom",
+  BASELINE: "alphabetic", CORNER: "corner", CORNERS: "corners", RADIUS: "radius",
+  CLOSE: "close", OPEN: "open", CHORD: "chord", PIE: "pie", PROJECT: "square",
+  ROUND: "round", SQUARE: "butt", MITER: "miter", BEVEL: "bevel", RGB: "rgb", HSB: "hsb",
+  HSL: "hsl", ADD: "lighter", MULTIPLY: "multiply", SCREEN: "screen", OVERLAY: "overlay",
+  REPLACE: "source-over", DIFFERENCE: "difference", EXCLUSION: "exclusion",
+  UP_ARROW: 38, DOWN_ARROW: 40, LEFT_ARROW: 37, RIGHT_ARROW: 39,
+  ENTER: 13, RETURN: 13, ESCAPE: 27, BACKSPACE: 8, DELETE: 46, TAB: 9, SHIFT: 16,
+  CONTROL: 17, ALT: 18, OPTION: 18, SPACE: 32,
+});
+global.p5 = { disableFriendlyErrors: true, prototype: {}, Vector: function () {} };
+
+// ---------------------------------------------------------------- load the app
+const blocks = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(function (b) { return b[1]; });
+const src = blocks.find(function (b) { return b.indexOf('function setup') >= 0; });
+if (!src) { console.error('FAIL: no inline <script> containing setup()'); process.exit(1); }
+
+// ---------------------------------------------------------------- app bridge
+try {
+  new Function(src + "\n;" + modelSrc + "\n;" + siteSrc + `
+;globalThis.__app = {
+  // Evaluate in the app's own scope. Site checks use this to reach whatever their site.js
+  // defines, so the harness does not have to list each site's functions.
+  run: (code) => eval(code),
+  keyPressed: typeof keyPressed==='function'?keyPressed:null,
+  setup: typeof setup==='function'?setup:null,
+  draw: typeof draw==='function'?draw:null,
+  updateParticles: typeof updateParticles==='function'?updateParticles:null,
+  velocityStep: typeof velocityStep==='function'?velocityStep:null,
+  updateBedBuffer: typeof updateBedBuffer==='function'?updateBedBuffer:null,
+  updateBedThumb: typeof updateBedThumb==='function'?updateBedThumb:null,
+  rebuildUserBedGrid: typeof rebuildUserBedGrid==='function'?rebuildUserBedGrid:null,
+  paintFriction: typeof paintFriction==='function'?paintFriction:null,
+  bedZ: typeof bedZ==='function'?bedZ:null,
+  userBedZ: typeof userBedZ==='function'?userBedZ:null,
+  xsStrip: typeof xsStrip==='function'?xsStrip:null,
+  xsStripAt: typeof xsStripAt==='function'?xsStripAt:null,
+  getState: () => ({
+    particles: typeof particles!=='undefined'?particles:null,
+    obstacles: typeof obstacles!=='undefined'?obstacles:null,
+    bedPoints: typeof bedPoints!=='undefined'?bedPoints:null,
+    U: typeof u!=='undefined'?u:null,
+    V: typeof v!=='undefined'?v:null,
+    friction: typeof friction!=='undefined'?friction:null,
+    fricMode: typeof fricMode!=='undefined'?fricMode:null,
+    fricGrid: typeof fricGrid!=='undefined'?fricGrid:null,
+    fricDampGrid: typeof fricDampGrid!=='undefined'?fricDampGrid:null,
+    settleThresh: typeof settleThresh!=='undefined'?settleThresh:null,
+    inflowVel: typeof inflowVel!=='undefined'?inflowVel:null,
+    paused: typeof paused!=='undefined'?paused:null,
+    simTime: typeof simTime!=='undefined'?simTime:null,
+    frameCount: typeof frameCount!=='undefined'?frameCount:null,
+    elevMode: typeof elevMode!=='undefined'?elevMode:null,
+    thumbBig: typeof thumbBig!=='undefined'?thumbBig:null,
+    bedMode: typeof bedMode!=='undefined'?bedMode:null,
+    width: typeof width!=='undefined'?width:null,
+    height: typeof height!=='undefined'?height:null,
+    GW: typeof GW!=='undefined'?GW:null,
+    GH: typeof GH!=='undefined'?GH:null,
+    NX: typeof NX!=='undefined'?NX:null,
+    NY: typeof NY!=='undefined'?NY:null,
+    solid: typeof solid!=='undefined'?solid:null,
+    P: typeof p!=='undefined'?p:null,
+    divArr: typeof divArr!=='undefined'?divArr:null,
+    cellW: typeof cellW!=='undefined'?cellW:null,
+    cellH: typeof cellH!=='undefined'?cellH:null,
+  }),
+  setPaused: (x) => { paused = x; },
+  setFriction: (x) => { friction = x; },
+  setFricMode: (x) => { fricMode = x; },
+  setInflow: (x) => { inflowVel = x; },
+  setBedPoints: (pts) => { bedPoints = pts; },
+  setObstacles: (obs) => { obstacles = obs; },
+};
+`)();
+} catch (e) {
+  console.error("SCRIPT THREW ON LOAD:\n" + e.stack.split("\n").slice(0, 6).join("\n"));
+  process.exit(1);
+}
+
+const app = globalThis.__app;
+const S = () => app.getState();
+
+let failures = 0;
+const check = (ok, label, detail) => {
+  console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}${detail ? "  — " + detail : ""}`);
+  if (!ok) failures++;
+};
+
+console.log(`defaults from markup: ${Object.keys(DEFAULTS).length} controls`);
+
+// Count what the interface asks of the model, by wrapping the registered model's hooks
+// before setup(). The model still does its work; the wrappers only watch.
+globalThis.__model = { step: 0, bedChanged: 0, scene: 0, pointer: 0, take: null, gridsReady: 0, sceneReady: 0, spinUp: 0, stepsAtSpinUp: -1, hud: 0, obstaclesAtSceneReady: -1, gwAtGridsReady: 0 };
+app.run(`(function () {
+  const w = globalThis.__model;
+  if (!model) return;
+  const step = model.step; model.step = function () { w.step++; return step.apply(model, arguments); };
+  const bc = model.bedChanged; model.bedChanged = function () { w.bedChanged++; if (bc) return bc.apply(model, arguments); };
+  const sc = model.scene; model.scene = function () { w.scene++; if (sc) return sc.apply(model, arguments); };
+  const pt = model.pointer; model.pointer = function () { w.pointer++; if (w.take !== null) return w.take; return pt ? pt.apply(model, arguments) : false; };
+  // Setup-time hooks. Watching one the model does not have is harmless, except spinUp, which
+  // replaces the default spin-up when present, so it is only wrapped if the model has it.
+  const gr = model.bedGridsReady; model.bedGridsReady = function () { w.gridsReady++; w.gwAtGridsReady = GW; if (gr) return gr.apply(model, arguments); };
+  const sr = model.sceneReady; model.sceneReady = function () { w.sceneReady++; w.obstaclesAtSceneReady = obstacles.length; if (sr) return sr.apply(model, arguments); };
+  const su = model.spinUp; if (su) model.spinUp = function () { w.spinUp++; return su.apply(model, arguments); };
+  const hd = model.hud; model.hud = function () { w.hud++; if (hd) return hd.apply(model, arguments); };
+})()`);
+
+// A probe backend, registered before setup() the way a site.js would be. It records what the
+// interface calls, so the extension point is tested whatever site.js this page has.
+globalThis.__probe = { mounts: 0, slot: null, frames: 0, keyHits: 0 };
+app.run(`registerBackend({
+  id: '__probe',
+  mount(slot) { globalThis.__probe.mounts++; globalThis.__probe.slot = slot; },
+  frame() { globalThis.__probe.frames++; },
+  keys: { q: () => { globalThis.__probe.keyHits++; }, f: () => { globalThis.__probe.keyHits += 100; } },
+  help: 'Q probe',
+})`);
+
+// ---------------------------------------------------------------- 1. setup
+try {
+  app.setup();
+  globalThis.__model.stepsAtSpinUp = globalThis.__model.step;
+  check(true, "setup() completes without throwing", "clean");
+} catch (e) {
+  check(false, "setup() completes without throwing", e.message);
+  console.log("HARNESS FAIL — setup aborted, nothing else can run");
+  process.exit(1);
+}
+
+// ---------------------------------------------------------------- 2. the draw loop is alive
+// p5 owns frameCount and the mock never advances it, so count the draws here and treat
+// advancing simulation time as the evidence that the loop body actually ran.
+{
+  // The app launches paused by design, so the loop only advances once it is running.
+  app.setPaused(false);
+  const t0 = S().simTime;
+  let drew = 0;
+  for (let i = 0; i < 60; i++) { app.draw(); drew++; }
+  const t1 = S().simTime;
+  check(drew === 60 && t1 > t0, "the draw loop runs", `${drew} draws, simTime ${t0.toFixed(2)} -> ${t1.toFixed(2)} s`);
+}
+
+// ---------------------------------------------------------------- 3. sediment is moving
+// Which way it should go is the model's business (dev/model_checks.js). Here: it moves.
+{
+  app.setPaused(false);
+  const P = S().particles, before = new Map(P.map(p => [p, [p.x, p.y]]));
+  for (let i = 0; i < 60; i++) app.draw();
+  let n = 0, d = 0;
+  for (const p of S().particles) { const b = before.get(p); if (b) { n++; d += Math.abs(p.x - b[0]) + Math.abs(p.y - b[1]); } }
+  check(n > 0 && d / n > 1, "sediment particles move", `${n} tracked, mean displacement ${(n ? d / n : 0).toFixed(1)} px in 60 frames`);
+}
+
+// ---------------------------------------------------------------- 4. a drawn transect edits the bed
+{
+  const w = S().width, h = S().height;
+  const pts = [{ x: w * 0.25, z: 40 }, { x: w * 0.5, z: 90 }, { x: w * 0.75, z: 50 }];
+  app.setBedPoints(pts);
+  app.rebuildUserBedGrid();
+  const midX = w * 0.5, midY = h * 0.5;
+  const z = app.userBedZ(midX, midY);
+  check(z > 0, "a drawn transect raises the bed along the line", `userBedZ(${midX.toFixed(0)},${midY.toFixed(0)}) = ${z.toFixed(1)}`);
+  check(isFinite(app.bedZ(midX, midY)), "bedZ is finite over the drawn bed", `${app.bedZ(midX, midY).toFixed(1)}`);
+}
+
+// ---------------------------------------------------------------- 5. every visible strip is clickable
+// A strip is drawn as rect(sx, 0, w, stripY) — from the top of the canvas down to the
+// chart — so the point to test is inside that band, above stripY. Testing below stripY
+// would be testing the chart, where nothing is clickable by design.
+{
+  const bp = S().bedPoints;
+  let ok = true, bad = null;
+  for (let si = 0; si < bp.length; si++) {
+    const g = app.xsStrip(si);
+    const cx = g.sx + g.w * 0.5;
+    const cy = g.stripY * 0.5;
+    const hit = app.xsStripAt(cx, cy);
+    if (hit !== si) { ok = false; bad = `station ${si} at (${cx.toFixed(0)},${cy.toFixed(0)}) -> hit ${hit}`; break; }
+  }
+  check(ok, "every visible profile strip is clickable", bad || `${bp.length} stations agree`);
+}
+
+// ---------------------------------------------------------------- 5b. the bed editor
+// Driven through mousePressed/mouseDragged, the paths a person uses, with p5's mouse globals
+// set by hand.
+{
+  const st = S(), w = st.width, h = st.height, CH = 160;
+  const savedBed = st.bedPoints, savedXS = app.run("bedXSections");
+  const at = (x, y) => { globalThis.mouseX = x; globalThis.mouseY = y; };
+  const press = (x, y) => { at(x, y); app.run("mousePressed")({}); };
+  const drag = (x, y) => { at(x, y); app.run("mouseDragged")({}); };
+  const release = () => app.run("mouseReleased()");
+  const fresh = () => { app.setBedPoints([]); app.run("bedXSections = []; activeXSection = -1"); };
+
+  // Entering bed mode pauses; leaving restores what it was, whichever way it was.
+  app.run("if (bedMode) toggleBedMode()");
+  app.setPaused(false); app.run("toggleBedMode()"); const inRun = S().paused; app.run("toggleBedMode()"); const outRun = S().paused;
+  app.setPaused(true);  app.run("toggleBedMode()"); app.run("toggleBedMode()"); const outHeld = S().paused;
+  check(inRun === true && outRun === false && outHeld === true, "bed mode pauses, and leaving it restores the run as it was",
+        `running: paused ${inRun} inside, ${outRun} after; paused before: ${outHeld} after`);
+
+  app.run("toggleBedMode()");                       // stay in bed mode for the editing checks
+  fresh();
+  press(w * 0.3, h - CH / 2); release();
+  const zMid = S().bedPoints.length === 1 ? S().bedPoints[0].z : NaN;
+  const rLo = app.run("bedZMin()"), rHi = app.run("bedZMax()");      // this model's range
+  check(Math.abs(zMid - (rLo + rHi) / 2) < 0.01, "a click in the transect chart lands at the elevation under the pointer", `half-way up a ${rLo}..${rHi} chart gives z = ${zMid}`);
+
+  // Drag that point far above the chart: it stops at the top of the range.
+  press(w * 0.3, h - CH / 2); drag(w * 0.3, h - CH - 300); release();
+  const zTop = S().bedPoints[0].z;
+  check(zTop === rHi, "a transect point dragged past the chart stops at the top of the range", `z = ${zTop}`);
+
+  // A model can widen the range to both sides of zero (a coast). Same chart, same mapping.
+  const m = app.run("model"), savedRange = m.bed;
+  m.bed = { zMin: -150, zMax: 170, datumLabel: "still water" };
+  fresh();
+  press(w * 0.3, h - 10); release();                 // near the bottom of the chart
+  press(w * 0.6, h - CH + 10); release();            // near the top
+  const lo = S().bedPoints[0].z, hi = S().bedPoints[1].z;
+  const yLo = app.run("bedChartYOf")(lo), yHi = app.run("bedChartYOf")(hi);
+  check(Math.abs(lo - (-130)) < 0.01 && Math.abs(hi - 150) < 0.01 && Math.abs(yLo - (h - 10)) < 1e-6 && Math.abs(yHi - (h - CH + 10)) < 1e-6,
+        "with a signed range the transect goes below zero, and is drawn where it was clicked", `z ${lo.toFixed(1)} and ${hi.toFixed(1)} in -150..170`);
+  press(w * 0.3, h - 10); drag(w * 0.3, h + 400); release();
+  check(S().bedPoints[0].z === -150, "a transect point dragged below the chart stops at the bottom of the range", `z = ${S().bedPoints[0].z}`);
+  app.rebuildUserBedGrid();
+  const zLine = app.userBedZ(w * 0.32, h * 0.5);
+  check(zLine < -100, "a bed drawn below zero is below zero in the bed itself", `userBedZ just past the low point = ${zLine.toFixed(1)}`);
+  let threw = null; try { for (let i = 0; i < 3; i++) app.draw(); } catch (e) { threw = e; }
+  check(!threw, "the chart draws with a signed range", threw ? threw.message : "clean");
+  m.bed = savedRange;
+
+  // A cross-section point must be grabbable where it is drawn.
+  fresh();
+  press(w * 0.5, h - 40); release();                 // one station, high on the transect (z = 40)
+  const g = app.xsStrip(0), yClick = g.stripY * 0.4, xClick = g.sx + g.w * 0.25;
+  press(xClick, yClick); release();                  // add a profile point in its strip
+  const xs = app.run("bedXSections")[0];
+  const n1 = xs ? xs.points.length : 0;
+  press(xClick, yClick);                             // press again on the same spot
+  const grabbed = app.run("editingXSStation"), n2 = app.run("bedXSections")[0].points.length;
+  release();
+  check(n1 === 1 && n2 === 1 && grabbed && grabbed.pointIdx === 0, "a cross-section point can be grabbed where it is drawn",
+        `points after first click ${n1}, after pressing on it again ${n2}, grabbed: ${!!grabbed}`);
+
+  app.run("toggleBedMode()");
+  app.setBedPoints(savedBed); globalThis.__xs = savedXS; app.run("bedXSections = globalThis.__xs; activeXSection = -1"); app.rebuildUserBedGrid();
+  app.setPaused(false);
+}
+
+// ---------------------------------------------------------------- 6. Space toggles pause exactly once
+{
+  app.setPaused(true);
+  const before = S().paused;
+  const handlers = global.__keydown || [];
+  for (const h of handlers) {
+    try { h({ key: " ", code: "Space", keyCode: 32, preventDefault() {} }); } catch (e) {}
+  }
+  const after = S().paused;
+  check(handlers.length > 0 && before === true && after === false,
+        "Space unpauses exactly once", `${handlers.length} keydown handler(s), ${before} -> ${after}`);
+}
+
+// ---------------------------------------------------------------- 7. model extension point
+{
+  const w = globalThis.__model, m = app.run("model");
+  check(!!m && typeof m.id === "string", "a model is registered", m ? `model: ${m.id}` : "none");
+
+  app.setPaused(false);
+  const s0 = w.step; for (let i = 0; i < 25; i++) app.draw();
+  const running = w.step - s0;
+  app.setPaused(true);
+  const s1 = w.step; for (let i = 0; i < 10; i++) app.draw();
+  check(running === 25 && w.step === s1, "the interface steps the model once per running frame, and not while paused", `${running} steps in 25 frames, ${w.step - s1} while paused`);
+  app.setPaused(false);
+
+  const slot = app.run("document.getElementById('model-controls')"), c = m.controls || {};
+  check(!c.html || slot.innerHTML === c.html, "the model's controls are mounted in the sidebar", c.html ? `${c.html.length} chars of markup` : "this model has no controls");
+
+  const b0 = w.bedChanged; app.rebuildUserBedGrid();
+  check(w.bedChanged === b0 + 1, "the model is told when the bed changes", `${w.bedChanged - b0} call(s) for one bed rebuild`);
+
+  // A model tool (the river's friction brush) can take the pointer. When it does the click
+  // must not also place an obstacle; when it does not, the click goes on to the interface.
+  const press = () => { globalThis.mouseX = 400; globalThis.mouseY = 300; app.run("mousePressed")({}); };
+  const n0 = S().obstacles.length;
+  w.take = true; press(); const taken = S().obstacles.length - n0;
+  w.take = false; press(); const passed = S().obstacles.length - n0;
+  w.take = null;
+  check(taken === 0 && passed === 1, "a model tool can take the pointer, and otherwise the click reaches the interface", `obstacles added: ${taken} when taken, ${passed} when not`);
+  app.setObstacles(S().obstacles.slice(0, n0)); app.run("solidMaskDirty = true; selectedIdx = -1");
+
+  const k0 = w.scene; app.run("sceneState()");
+  check(w.scene === k0 + 1, "sceneState() asks the model for its part", `${w.scene - k0} call(s)`);
+
+  // ---- setup-time hooks
+  check(w.gridsReady === 1 && w.gwAtGridsReady > 0, "the model is told once when the bed grids exist", `${w.gridsReady} call(s), GW ${w.gwAtGridsReady} at the time`);
+  check(w.sceneReady === 1 && w.obstaclesAtSceneReady === 3, "the model is handed the default scene once, after its obstacles exist", `${w.sceneReady} call(s), ${w.obstaclesAtSceneReady} obstacles at the time`);
+  check(m.spinUp ? (w.spinUp === 1) : (w.stepsAtSpinUp === 80),
+        "the flow is developed before the first frame, by the model's spin-up if it has one", m.spinUp ? `model spin-up ran ${w.spinUp} time(s)` : `${w.stepsAtSpinUp} default steps`);
+  const h0 = w.hud; for (let i = 0; i < 5; i++) app.draw();
+  check(w.hud - h0 === 5, "the model's readouts are refreshed every frame", `${w.hud - h0} calls in 5 frames`);
+  {
+    const el = (id) => app.run(`document.getElementById('${id}')`), c2 = m.controls || {};
+    const okStats = !c2.stats || el("model-stats").innerHTML === c2.stats;
+    const okHelp = !m.help || el("help-site").innerHTML.includes(m.help);
+    const okRender = !m.render || (app.run("slowColor") === m.render.slowColor && app.run("flowOpacity") === m.render.flowOpacity && el("slow-color").value === m.render.slowColor);
+    const okTl = !m.timeline || (app.run("timelineDuration") === m.timeline.duration && app.run("DEFAULT_OBJ_DUR") === m.timeline.objectDuration && String(el("timeline-dur").max) === String(m.timeline.max));
+    check(okStats && okHelp && okRender && okTl, "what the model declares (stats line, help, render defaults, timeline) is applied at setup",
+          `stats ${okStats}, help ${okHelp}, render ${okRender}, timeline ${okTl}` + (!c2.stats && !m.help && !m.render && !m.timeline ? " (this model declares none)" : ""));
+  }
+
+  // ---- hooks a model may or may not have: put a known one in, see the interface use it,
+  // and put the model's own back.
+  const withHook = (owner, name, fn, body) => { const had = Object.prototype.hasOwnProperty.call(owner, name), old = owner[name]; owner[name] = fn; try { return body(); } finally { if (had) owner[name] = old; else delete owner[name]; } };
+  const W2 = S().width, H2 = S().height;
+
+  const base = app.bedZ(W2 * 0.5, H2 * 0.5);
+  const lifted = withHook(m, "bedTotal", (z) => z + 7, () => app.bedZ(W2 * 0.5, H2 * 0.5));
+  const plain = withHook(m, "bedTotal", undefined, () => app.bedZ(W2 * 0.5, H2 * 0.5));
+  check(Math.abs(lifted - plain - 7) < 1e-9 && isFinite(base), "a model's bed layers are added to the bed", `bed ${plain.toFixed(2)} -> ${lifted.toFixed(2)} with a layer of 7`);
+
+  {
+    const savedBed = S().bedPoints, savedXS = app.run("bedXSections");
+    app.setBedPoints([]);
+    const d = withHook(m, "defaultBedZ", () => -5, () => [app.userBedZ(W2 * 0.3, H2 * 0.4), app.run("computeUserBedZ")(W2 * 0.3, H2 * 0.4)]);
+    const none = withHook(m, "defaultBedZ", undefined, () => app.userBedZ(W2 * 0.3, H2 * 0.4));
+    check(d[0] === -5 && d[1] === -5 && none === 0, "with nothing drawn the bed is the model's default, or flat", `default ${d[0]}, without one ${none}`);
+    app.setBedPoints(savedBed); globalThis.__xs = savedXS; app.run("bedXSections = globalThis.__xs"); app.rebuildUserBedGrid();
+  }
+
+  {
+    const saved = S().obstacles, ob = { type: "rect", x: W2 * 0.5, y: H2 * 0.5, w: 120, h: 120, size: 120, rotation: 0, clips: [{ start: 0, dur: Infinity }] };
+    const count = () => { app.run("buildSolidMask()"); let n = 0; for (const x of S().solid) n += x; return n; };
+    app.setObstacles([ob]);
+    const solidN = withHook(m, "isSolid", () => true, count), softN = withHook(m, "isSolid", () => false, count);
+    check(solidN > 50 && softN === 0, "an object the model calls not solid is left out of the flow's obstacle mask", `${solidN} cells when solid, ${softN} when not`);
+
+    app.setObstacles([]);
+    const made = withHook(m, "makeObstacle", (type, x, y) => type === "__kind" ? { type: "rect", kind: "__kind", x, y, w: 10, h: 10, rotation: 0, clips: [{ start: 0, dur: Infinity }] } : null, () => {
+      app.run("addObstacle")(100, 100, "__kind", 0); app.run("addObstacle")(200, 200, "rect", 0);
+      return S().obstacles.map(o => (o.kind || "plain") + ":" + o.type + ":" + o.w).join(", ");
+    });
+    const gs = app.run("ghostSize");
+    check(made === `__kind:rect:10, plain:rect:${gs}`, "a model builds objects of its own kind, and the rest are built as usual", made);
+    app.setObstacles(saved); app.run("solidMaskDirty = true; selectedIdx = -1");
+  }
+
+  {
+    let got = 0;
+    const flow0 = app.run("showFlow");
+    withHook(m, "key", (k) => { if (k === "9") { got++; return true; } return false; }, () => { globalThis.key = "9"; app.keyPressed(); globalThis.key = "f"; app.keyPressed(); });
+    check(got === 1 && app.run("showFlow") !== flow0, "a model receives its keys, and the interface keeps its own", `model key hits ${got}`);
+    globalThis.key = "f"; app.keyPressed();
+  }
+
+  {
+    const T = app.run("timelineDuration"), pp = app.run("timelinePingPong");
+    app.run("timelinePingPong = false");
+    const lt = withHook(m, "clock", () => T * 2.25, () => app.run("timelineLoopTime()"));
+    const fd = withHook(m, "formatDuration", (t) => "<" + t + ">", () => app.run("fmtDur")(3));
+    globalThis.__pp = pp; app.run("timelinePingPong = globalThis.__pp");
+    check(Math.abs(lt - T * 0.25) < 1e-9 && fd === "<3>", "the timeline runs on the model's clock and prints in its units", `loop time ${lt} of ${T}, label ${fd}`);
+  }
+
+  {
+    let calls = 0, arg = null;
+    withHook(m, "renderBed", (g) => { calls++; arg = g; }, () => app.updateBedBuffer());
+    check(calls === 1 && arg === app.run("bedSurface"), "a model that draws the bed surface is asked to, with the surface", `${calls} call(s)`);
+    app.updateBedBuffer();
+  }
+
+  {
+    // Sediment's response to the bed can be the model's. Counted over one particle update
+    // with a bed drawn, so every branch that asks is reached.
+    const R = m.rules, savedBed = S().bedPoints;
+    app.setBedPoints([{ x: 0, z: 60 }, { x: W2, z: 60 }]); app.rebuildUserBedGrid();
+    const n = { slope: 0, chance: 0, boost: 0 };
+    withHook(R, "slope", () => { n.slope++; }, () => withHook(R, "bedSettleChance", () => { n.chance++; return 0; }, () => withHook(R, "settleBoost", () => { n.boost++; return 1; }, () => {
+      app.run("for (const p of particles) { p.born = simTime - 5; p.x = Math.max(p.x, 150); }");
+      app.updateParticles();
+    })));
+    const P = S().particles.length;
+    check(n.slope >= P * 0.9 && n.chance >= P * 0.9 && n.boost >= P * 0.9, "sediment's response to the bed comes from the model's rules when it has them", `${P} particles: slope ${n.slope}, bed settle ${n.chance}, boost ${n.boost}`);
+    app.setBedPoints(savedBed); app.rebuildUserBedGrid();
+  }
+}
+
+// ---------------------------------------------------------------- 8. the model's own checks
+// Everything about how the water moves belongs to the model, so its checks do too:
+// dev/model_checks.js next to the page (for the river: transport direction, friction, the
+// bed in the flow, still water).
+{
+  const modelChecks = path.join(ROOT, "dev", "model_checks.js");
+  if (fs.existsSync(modelChecks)) {
+    require(modelChecks)({ app, S, check, ROOT });
+  } else {
+    console.log("  (no dev/model_checks.js for this model)");
+  }
+}
+
+// ---------------------------------------------------------------- 9. site extension point
+{
+  const pr = globalThis.__probe;
+  check(pr.mounts === 1 && pr.slot && pr.slot.id === "site-slot",
+        "a backend is mounted once, into the sidebar slot", `${pr.mounts} mount(s), slot ${pr.slot ? pr.slot.id : "none"}`);
+
+  const f0 = pr.frames;
+  for (let i = 0; i < 25; i++) app.draw();
+  check(pr.frames - f0 === 25, "a backend's frame() runs once per drawn frame", `${pr.frames - f0} calls in 25 draws`);
+
+  // p5 sets the global \`key\` before calling keyPressed(). A backend gets its own keys, and
+  // never a key the interface already uses (F toggles the flow field).
+  const flow0 = app.run("showFlow");
+  globalThis.key = "Q"; app.keyPressed();
+  globalThis.key = "f"; app.keyPressed();
+  check(pr.keyHits === 1 && app.run("showFlow") !== flow0,
+        "a backend receives its keys, and the interface keeps its own", `probe hits ${pr.keyHits}`);
+  globalThis.key = "f"; app.keyPressed();          // put the flow overlay back
+
+  app.setObstacles([{ type: "circle", x: 300, y: 200, w: 50, h: 50, size: 50, rotation: 0, clips: [{ start: 0, dur: Infinity }] },
+                    { type: "poly", x: 500, y: 300, rotation: 15, points: [{ x: -20, y: -20 }, { x: 20, y: -20 }, { x: 0, y: 25 }], clips: [{ start: 0, dur: Infinity }] }]);
+  const sc = app.run("sceneState()");
+  const okScene = sc && sc.obstacles.length === 2 && sc.obstacles[0].points === undefined &&
+                  (sc.obstacles[1].points || []).length === 3 &&
+                  sc.width === S().width && sc.height === S().height &&
+                  sc.bed_profile === S().bedPoints && Array.isArray(sc.bed_xsections);
+  check(okScene, "sceneState() describes the drawn scene", sc ? `${sc.obstacles.length} obstacles, ${sc.bed_profile.length} bed points` : "nothing returned");
+  app.setObstacles([]);
+  app.run("solidMaskDirty = true");
+}
+
+// ---------------------------------------------------------------- 10. the site's own checks
+{
+  const siteChecks = path.join(ROOT, "dev", "site_checks.js");
+  if (fs.existsSync(siteChecks)) {
+    require(siteChecks)({ app, S, check, ROOT, HTML: path.resolve(HTML), html, siteSrc });
+  } else {
+    console.log("  (no dev/site_checks.js for this site)");
+  }
+}
+
+// ---------------------------------------------------------------- 11. nothing has gone non-finite
+{
+  for (let i = 0; i < 30; i++) app.draw();
+  const P = S().particles;
+  const bad = P.filter(p => !isFinite(p.x) || !isFinite(p.y)).length;
+  const badU = S().U.reduce((n, x) => n + (isFinite(x) ? 0 : 1), 0);
+  check(bad === 0 && badU === 0, "particle and velocity state stay finite", `${P.length} particles, ${bad} bad, ${badU} bad velocities`);
+}
+
+console.log("");
+if (failures === 0) console.log("HARNESS PASS");
+else console.log(`HARNESS FAIL — ${failures} check(s)`);
+process.exit(failures === 0 ? 0 : 1);

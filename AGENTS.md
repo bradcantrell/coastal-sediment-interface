@@ -4,10 +4,43 @@
 Browser-based coastal wave and beach simulator. Coastal sibling of `bradcantrell/sediment-interface`
 (fluvial) and `bradcantrell/tidal-sediment-interface`. Read `PLAN.md` before changing physics.
 
-## What it is
+## What it is — three files, and which one a change belongs in
 
-Single file: `index.html` (~134 KB; HTML + CSS + p5.js canvas). No build step, no backend.
-p5.js 1.11.3 from cdnjs. Everything else is inline.
+The page is three files that load in this order and share one script scope. No build step,
+no backend. p5.js 1.11.3 from cdnjs.
+
+| File | Layer | What it is | Owned by |
+|---|---|---|---|
+| `index.html` | **interface** | Canvas, sediment particles, drawn bed and its editor, deposit, obstacles and their timeline, 3D view, sidebar. Knows nothing about waves. | `sediment-interface`, vendored byte for byte |
+| `model.js` | **model** | Everything coastal: the wave field, the bed change it drives, nourishment, model time, the coastal and morphology controls and readouts, the bed rendering. | this repo |
+| `site.js` | **site** | The XBeach case export. | this repo |
+
+- **Never edit `index.html` or `dev/interface_harness.js` here.** They are copies;
+  `dev/core.lock` records the commit and hashes, and the interface harness fails if one
+  drifts. To change the interface: change it in `/mnt/vault/projects/sediment-interface`,
+  run that repo's harness, commit there, run `dev/sync_core.sh` here, and run both
+  harnesses here. How the interface is organised and its rules are in
+  `sediment-interface/AGENTS.md`.
+- **The model reaches the interface through hooks**, registered at the bottom of `model.js`
+  with `registerModel()` (the MODEL EXTENSION POINT comment in `index.html` is the
+  reference). The ones this model uses: `step` (waves, then the bed, on model time),
+  `spinUp` (waves only), `bedTotal` (adds `morphZ + longZ`), `defaultBedZ`, `bedGridsReady`,
+  `renderBed`, `bed` (the editor's range), `clock` / `formatDuration` / `timeline` (model
+  years), `isSolid` / `makeObstacle` / `key` (nourishment, key 4), `rules` (sediment),
+  `hud`, `controls`, `render`. If the model needs something the interface does not offer,
+  that is a new hook in `sediment-interface` with a check, not an edit here.
+- Until 2026-11-13 this was one self-contained `index.html`, a fork of an early fluvial
+  interface. `dev/experiments/transport-bar-attempt.html` is still that old single-file
+  form and will not pick up interface changes.
+
+What changed for the user when it moved onto the shared interface: the XBeach export sits at
+the top of the sidebar; the OpenFOAM EXPORT CASE button is gone (it loaded a file this repo
+never had) along with the inflow slider that only fed it; the 3D view shows the beach
+instead of "no bed defined"; leaving bed mode with Escape restores the run state; and two
+interface fixes are inherited (deposit lands on the cell it is read from, and sediment
+bounces off rotated rectangles along the right normal). Those two fixes are the entire
+difference in the precision score, 62.6 to 62.7; with them undone every probe value is
+byte-identical. See `dev/PRECISION.md`.
 
 **Scope boundary, settled:** two-dimensional plan form, one sediment class, no infragravity.
 Do not add a third dimension, multiple sediment classes, or infragravity without asking.
@@ -51,7 +84,9 @@ retreat under sea-level rise, and shoreline feedback into the breaking angle.
 
 `bedZ = userBedZ + depoZ + morphZ + longZ`
 
-- `userBedGrid` / `depoGrid` — carried over from the fluvial shell; dredge/fill and particles.
+- `userBedGrid` / `depoGrid` — owned by the interface; the drawn bed and particle deposit.
+  The interface computes `userBedZ + depoZ` and hands it to the model's `bedTotal`, which
+  adds the two layers below in the same order as before.
 - `morphGrid` — cross-shore relaxation. **Target-seeking, NOT volume-conserving.**
 - `longGrid` — longshore transport. **Conservative.** Kept in its own layer so the
   non-conservative relaxation cannot erase the accretion that proves a groyne works.
@@ -104,8 +139,20 @@ zero, so the bed does not lurch on load.
 ## Testing
 
 ```
-node dev/headless_harness.js index.html      # 79 checks
+node dev/headless_harness.js index.html      # the coastal model and the export: 79 checks
+node dev/interface_harness.js index.html     # the shared interface under this model: 42 checks
 ```
+
+Run both. `headless_harness.js` is this repo's; it loads the page the way a browser does
+(inline script, then `model.js`, then `site.js`, one scope) and reaches the model's state by
+name. `interface_harness.js` is the vendored shared harness; `dev/site_checks.js` adds this
+repo's checks to it (the vendored copies match the lock, the XBeach backend is mounted).
+The probe scripts (`conv_diag.js`, `edge_probe.js`, `interior_probe.js`, `flicker_probe.js`)
+load the page the same way.
+
+One check fails on vlmars and is not a regression: "frame time no worse than the recorded
+38 ms". That number was recorded on vlio; the same tree measures about 80 ms per frame under
+node here, before and after the move (78.7 and 81.6).
 
 `node --check` alone is **not** a gate — it passes on a silently empty field.
 
@@ -154,7 +201,8 @@ look like it failed. MSYS2 has no `git` of its own — it is a declared dependen
 
 ## Related
 
-- Fluvial: `D:/workspace/sediment-interface` (`index.html`, 67 functions, 88 KB).
+- Shared interface and river model: repo `sediment-interface`, `/mnt/vault/projects/sediment-interface` on vlmars, `D:/workspace/sediment-interface` on vlio.
+- This repo on vlmars: `/mnt/vault/projects/coastal-sediment-interface`.
 - Tidal: `D:/workspace/tidal-sediment-interface` (Venice lagoon sibling).
 - XBeach source/build: `D:/workspace/xbeach-src`.
 - Design rationale and phase gates: `PLAN.md`.
@@ -162,8 +210,9 @@ look like it failed. MSYS2 has no `git` of its own — it is a declared dependen
 ## Drawing a bed transect
 
 The long-profile strip spans **z = -150 to +170 bed units** (-7.5 m to +8.5 m), with still
-water drawn on it at z = 0. Use `bedStripY(z)` and `bedStripZ(y)` rather than inlining the
-mapping.
+water drawn on it at z = 0. The range and the label are this model's (`bed: { zMin, zMax,
+datumLabel }` in `registerModel`); the chart and its mapping are the interface's
+(`bedChartYOf(z)`, `bedChartZOf(y)`, `clampBedZ(z)`).
 
 The strip used to map 0..160 and clamp input to `max(0, z)`, so **no drawn transect could go
 below still water**. Every user-drawn profile was therefore dry land: no water column anywhere,

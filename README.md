@@ -13,8 +13,9 @@ deliberate — everything past it is what the case export is for.
 
 ## Status
 
-**Phase 5 — export.** The interface shell carries over from the fluvial Sediment Interface:
-all panels, particles, bed grids, obstacle choreography and timeline. On top of that: a wave
+**Phase 5 — export.** The page runs on the shared Sediment Interface (`index.html`, the same
+file the fluvial interface uses: panels, particles, bed editor, obstacle choreography and
+timeline). The coastal model is `model.js` and the XBeach export is `site.js`: a wave
 transformation, cross-shore profile response, CERC longshore transport, a timeline on model
 years, and an XBeach case writer.
 
@@ -183,7 +184,8 @@ then open <http://localhost:8102/>.
 ## Testing
 
 ```
-node dev/headless_harness.js index.html
+node dev/headless_harness.js index.html      # the coastal model and the export
+node dev/interface_harness.js index.html     # the shared interface under this model
 ```
 
 The harness parses the real markup, mocks p5 and the DOM, seeds every control from its

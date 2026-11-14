@@ -12,11 +12,25 @@ const path = require("path");
 const HTML = process.argv[2] || "index.html";
 const html = fs.readFileSync(HTML, "utf8");
 
+// The page is three files: index.html (the shared interface), then model.js (the coastal
+// model), then site.js (the XBeach export), loaded in that order into one scope. This loads
+// them the same way, and reads control defaults from all three, because the model's and the
+// site's controls are markup inside their own files.
+const PAGE_DIR = require("path").dirname(require("path").resolve(HTML));
+const sibling = (name) => {
+  const file = require("path").join(PAGE_DIR, name);
+  if (!html.includes('<script src="' + name + '"></script>')) return "";
+  if (!fs.existsSync(file)) { console.error("FAIL: the page loads " + name + " but there is none next to it"); process.exit(1); }
+  return fs.readFileSync(file, "utf8");
+};
+const modelSrc = sibling("model.js"), siteSrc = sibling("site.js");
+const markup = html + "\n" + modelSrc + "\n" + siteSrc;
+
 // ---------------------------------------------------------------- defaults from the markup
 const DEFAULTS = {};
-for (const m of html.matchAll(/id="([^"]+)"[^>]*?value="([^"]*)"/g)) DEFAULTS[m[1]] = m[2];
+for (const m of markup.matchAll(/id="([^"]+)"[^>]*?value="([^"]*)"/g)) DEFAULTS[m[1]] = m[2];
 // select elements carry no value=; take the first option
-for (const m of html.matchAll(/<select[^>]*id="([^"]+)"[^>]*>([\s\S]*?)<\/select>/g)) {
+for (const m of markup.matchAll(/<select[^>]*id="([^"]+)"[^>]*>([\s\S]*?)<\/select>/g)) {
   const opt = m[2].match(/value="([^"]*)"/);
   if (opt && !(m[1] in DEFAULTS)) DEFAULTS[m[1]] = opt[1];
 }
@@ -24,6 +38,7 @@ for (const m of html.matchAll(/<select[^>]*id="([^"]+)"[^>]*>([\s\S]*?)<\/select
 // ---------------------------------------------------------------- p5 / DOM mocks
 const noop = () => {};
 const ctx = () => ({
+  remove: noop,                 // p5.Graphics.remove(), called when a buffer is rebuilt
   background: noop, clear: noop, fill: noop, stroke: noop, noStroke: noop, noFill: noop,
   rect: noop, ellipse: noop, line: noop, circle: noop, text: noop, textSize: noop,
   textAlign: noop, push: noop, pop: noop, translate: noop, rotate: noop, scale: noop,
@@ -108,7 +123,7 @@ function makeRaster(w, h) {
   };
 
   const g = {
-    width: w, height: h, _buf: buf,
+    width: w, height: h, _buf: buf, remove: noop,
     clear() { buf.fill(0); },
     background(...a) { const c = norm(a); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) px(x, y, c); },
     fill(...a) { fillCol = norm(a); doFill = true; },
@@ -217,7 +232,7 @@ global.p5 = { disableFriendlyErrors: true, prototype: {}, Vector: function () {}
 // ---------------------------------------------------------------- load the app
 const m = html.match(/<script>\s*\n([\s\S]*?)\n<\/script>/);
 if (!m) { console.error("FAIL: no inline <script> found"); process.exit(1); }
-const src = m[1];
+const src = m[1] + "\n;" + modelSrc + "\n;" + siteSrc;
 
 try {
   new Function(src + `
@@ -304,8 +319,9 @@ try {
   shoreRef: typeof shoreRefAt==='function' ? shoreRefAt : null,
   // The long-profile strip mapping. Exposed so the harness can assert that a drawn transect
   // can reach below still water, which is the difference between a sea and a dry slope.
-  bedStripZ: typeof bedStripZ==='function' ? bedStripZ : null,
-  bedStripY: typeof bedStripY==='function' ? bedStripY : null,
+  // The interface's one mapping between elevation and the transect chart.
+  bedStripZ: typeof bedChartZOf==='function' ? bedChartZOf : null,
+  bedStripY: typeof bedChartYOf==='function' ? bedChartYOf : null,
   setBedMode: (v) => { if (typeof bedMode !== 'undefined') bedMode = v; },
   toggleBedMode: typeof toggleBedMode === 'function' ? toggleBedMode : null,
   isPaused: () => (typeof paused !== 'undefined' ? paused : null),

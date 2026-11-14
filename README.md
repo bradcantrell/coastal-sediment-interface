@@ -173,7 +173,7 @@ Waves only cut as high as they reach. Behind that the dune slumps onto the beach
 a time, so the scarp retreats through the storm and erosion keeps growing instead of
 stopping when the beach is used up. A storm response takes model days to weeks. When the
 storm passes the bar decays and calm waves rebuild the beach to the berm top within months.
-Above that, wind carries sand from the dry beach back to the cut dune at the **dune recovery**
+Above that, wind carries sand from the dry beach back to the cut dune at the **dune**
 rate, over years.
 
 ## Units and orientation

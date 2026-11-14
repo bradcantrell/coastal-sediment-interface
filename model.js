@@ -1231,7 +1231,7 @@ registerModel({
 
 <div class="sect-label">morphology <button class="reset-btn" id="btn-conv" title="run the same interval of model time at dt and at dt/2 and report how far the answer moves">conv</button> <button class="reset-btn" id="reset-morph">clear</button></div>
 <div class="ctrl-row"><label>model rate <span class="val" id="mrate-val">2.0</span> d/s</label><input type="range" id="m-rate" min="0.1" max="30" value="2" step="0.1"></div>
-<div class="ctrl-row"><label>dune recovery <span class="val" id="dune-val">10</span> m&sup3;/m/yr</label><input type="range" id="m-dune" min="0" max="30" value="10" step="1"></div>
+<div class="ctrl-row"><label>dune <span class="val" id="dune-val">10</span> m&sup3;/m/yr</label><input type="range" id="m-dune" min="0" max="30" value="10" step="1"></div>
 <div class="ctrl-row"><label>longshore <span class="val" id="ls-val">0.03</span></label><input type="range" id="m-long" min="0" max="0.2" value="0.03" step="0.005"></div>
 <div id="morph-readout" style="font-size:9px;color:rgba(255,190,120,0.6);line-height:1.5;margin:4px 0 3px 0;font-variant-numeric:tabular-nums;">
   erosion <span id="ro-er">0.00</span> m &nbsp; accretion <span id="ro-ac">0.00</span> m<br>

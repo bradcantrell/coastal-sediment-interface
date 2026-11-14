@@ -125,7 +125,7 @@ the numbers and the reasons; do not undo one without reading its entry there.
   the beach and why erosion keeps growing through a storm.
 - **Dune recovery.** In calm, wind moves sand from the dry beach (above wave reach, up to the
   berm top) to dune cells the model has lowered, each in proportion to what it is missing,
-  at `duneRate` m3 per metre per year (the "dune recovery" slider, default 10). Off under
+  at `duneRate` m3 per metre per year (the "dune" slider in the morphology panel, default 10). Off under
   storm waves. Not fitted to anything: XBeach has no wind. Calm waves alone rebuild the beach
   to the berm top, which covers most of a scarp; the wind does the part above that.
 - `morphZ()` and `longZ()` hold their edge value past the last cell centre. Reading zero

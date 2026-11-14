@@ -205,4 +205,50 @@ with and without). That is the correct result for a diagnostic and is why they c
 score claim.
 
 **Progression, current:** 53.4 → 65.8 → 73.0 → 76.4 → 66.6 → 61.8 → 62.7 → 64.5
-(`af3369a`) → 60.8 (physics since, unrecorded) → **62.6** (`b76139c`, HEAD `8141022`).
+(`af3369a`) → 60.8 (physics since, unrecorded) → 62.6 (`b76139c`, HEAD `8141022`)
+→ **62.7** (`b952c8b`, on the shared interface).
+
+
+---
+
+## Baseline on the shared interface — `b952c8b` (2026-11-13)
+
+`b952c8b` moved the page onto the shared Sediment Interface: `index.html` is now the interface
+vendored from `sediment-interface`, the coastal model is `model.js`, the XBeach export is
+`site.js`. No line of the model changed. The score moved anyway, by 0.1, and the cause is
+known exactly.
+
+    storm     rmse 0.223 m | barpos 100 m | erosion 0.14 | accretion 0.01
+    moderate  rmse 0.104 m | barpos  95 m | erosion 0.50 | accretion 0.39
+    COMPOSITE 62.7
+
+What moved relative to 62.6:
+
+- storm barpos       115 m → 100 m      better, though barpos still scores 0.00
+- storm accretion    0.03 → 0.01        better
+- moderate rmse      0.103 → 0.104      worse, slightly
+- moderate accretion 0.38 → 0.39        worse, slightly
+- seeded diseq rms   0.0337 → 0.0338    unchanged in effect
+- flux residual      0.0027 → 0.0029    worse, slightly
+- volume drift       7.1e-07 → 7.8e-07  unchanged in effect
+
+**The cause is two interface fixes this repo inherited, and nothing else.** The shared
+interface places a settling particle's deposit on the cell `depoZ()` reads it from (the old
+fork was half a cell off), and bounces a particle off a rotated rectangle along the correct
+normal. Deposit is a bed layer here (`bedZ = userBedZ + depoZ + morphZ + longZ`), so where
+sediment particles settle reaches the waves and the profile.
+
+This was tested, not assumed: with those two fixes undone in a scratch copy of the vendored
+`index.html`, and everything else as committed, `SCORE=` writes a probes file that is
+**byte-identical** to the one from `9958b59`, and the score is 62.6. The whole 0.1 is the
+two fixes.
+
+Two things this shows that were not written down before:
+
+- The scored storm profile depends on where sediment particles deposit. The 15 m of storm
+  bar position that hysteresis "cost" above comes back with these two sediment fixes (which
+  of the two does it was not isolated). Bar position at this resolution is that sensitive,
+  which is worth knowing before tuning anything against it.
+- The harness's frame-time check ("no worse than the recorded 38 ms") is a record from
+  vlio. On vlmars under node the same tree measures 78.7 ms per frame before the move and
+  81.6 after. It fails on vlmars at every commit and is not a regression signal there.

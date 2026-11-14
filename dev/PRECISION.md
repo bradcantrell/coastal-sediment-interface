@@ -314,3 +314,55 @@ never comes from the breakpoint.
 
 A latent order dependence found on the way: the calm probes read the storm intensity left by
 the last morphology step. The storm budget check is therefore skipped under `SCORE=`.
+
+
+---
+
+## A corrected scoring basis: 53.2 (2026-11-14)
+
+Three changes to how the score is measured. None changes the model.
+
+**1. The model now runs as long as XBeach did.** The harness looked for each reference one
+directory too deep and for `modelDays` at the top of the JSON instead of under `meta`. Both
+misses fell back silently to 2.5, so since the references were extended the model has been
+run for 2.5 days and scored against XBeach's 10. It now reads `meta.modelDays` and fails
+loudly if it is missing. Effect on the score: 54.5 → 54.0, small, and the reason it is small
+is itself a finding (below).
+
+**2. The references are the middle rows.** `finalDz` is now the mean over rows 12 to 28 of 41.
+With oblique waves XBeach strips sand at the updrift side boundary: the storm run's edge rows
+lose 114 m² per metre of shore while the middle gains 5. The old all-row mean therefore
+overstated erosion and understated the bar (storm crest +0.34 m all rows, +0.41 m middle).
+The all-row profile stays in each file as `finalDzAllRows`, with each row's budget as
+`rowNet`. Effect: 54.0 → 53.2.
+
+**3. Four more XBeach cases, reported and not scored**, run on vlio on the storm bed
+(`D:/workspace/xb-ref-*`): the storm with shore-normal waves, the storm without surge, an
+intermediate case, and a calm case. Each reference file now also carries `history`, the
+profile summarised once per model day.
+
+    storm     rmse 0.228 m | barpos 100 m | ero 0.25 | acc 0.61 | centre 185 m apart | deposited 33.7 / 45.7
+    moderate  rmse 0.099 m | barpos 370 m | ero 0.60 | acc 0.81 | centre 193 m apart | deposited  7.6 / 18.6
+    COMPOSITE 53.2
+    reported:
+    normal    rmse 0.204 m | barpos 135 m | ero 0.23 | acc 0.59 | centre 162 m apart | deposited 33.8 / 53.4
+    nosurge   rmse 0.183 m | barpos 130 m | ero 0.31 | acc 0.69 | centre  98 m apart | deposited  8.9 / 43.0
+    mid       rmse 0.127 m | barpos  75 m | ero 0.45 | acc 0.69 | centre 174 m apart | deposited 19.2 / 29.3
+    calm      rmse 0.081 m | barpos  65 m | ero 0.97 | acc 0.93 | centre 140 m apart | deposited  1.4 /  8.9
+    all 6 cases: mean rmse 0.154 m, mean centre error 159 m
+
+What six cases with history show that two end states could not:
+
+- **The model finishes in a day; XBeach is still going at ten.** Storm deposit by day, model /
+  XBeach: day 1 34 / 14, day 5 34 / 35, day 10 34 / 46 m² per metre. That is why running the
+  model four times longer barely moved the score. The model relaxes to a fixed target and
+  stops. XBeach keeps cutting the beach.
+- **XBeach's bar starts at the shoreline and moves seaward** in every case (storm centre of
+  deposit x = 400 on day 1, 370 on day 10; the shoreline is near 450). The model's deposit
+  sits at x = 185 from the first day.
+- **XBeach erodes this bed in calm waves** (0.6 m at Hs 1.2 m), and without surge. The model
+  moves almost nothing in either. The calm-beach gate stays as a design rule of the interface
+  (decided 2026-11-14); this disagreement is recorded, not resolved.
+- The moderate case's crest metric jumped from 95 m to 370 m off. Its true bar is 0.04 m high
+  and the highest sample is now a point of the offshore film. This is the instability the
+  centre-of-mass measure was added for.

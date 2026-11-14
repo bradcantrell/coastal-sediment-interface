@@ -1184,14 +1184,31 @@ if (process.env.SCORE) {
   // --- storm bed-change profile against the recorded XBeach run.
   // The model time comes from the reference itself, so extending the XBeach run cannot leave
   // the two sides comparing different durations -- which is what a hardcoded 2.5 would do.
-  const refDays = (name, dflt) => {
-    try { return JSON.parse(fs.readFileSync(__dirname + "/coastal-sediment-interface/dev/" + name, "utf8")).modelDays || dflt; }
-    catch (e) { return dflt; }
+  // This used to look for the file one directory too deep and for modelDays at the top level
+  // of the JSON, where it is not. Both misses fell back silently to 2.5, so the model was run
+  // for 2.5 days and scored against XBeach's 10. A missing reference is now an error.
+  const refMeta = (name) => {
+    const m = JSON.parse(fs.readFileSync(__dirname + "/" + name, "utf8")).meta;
+    if (!(m && m.modelDays > 0)) throw new Error(name + " has no meta.modelDays");
+    return m;
   };
-  out.storm_days = refDays("xbeach-reference.json", 2.5);
-  out.case2_days = refDays("xbeach-reference-2.json", 2.5);
+  out.storm_days = refMeta("xbeach-reference.json").modelDays;
+  out.case2_days = refMeta("xbeach-reference-2.json").modelDays;
   out.storm_dz = runProfile(STORM_COND, out.storm_days);
   out.case2_dz = runProfile(CASE2_COND, out.case2_days);
+
+  // Further XBeach cases on the same bed, reported and not scored. Their forcing is read
+  // from the reference file, so the file is the one place a case is defined. Each also
+  // records the profile once per model day, to compare with the reference's history.
+  out.extra = {};
+  for (const name of ["normal", "nosurge", "mid", "calm"]) {
+    const m = refMeta("xbeach-reference-" + name + ".json");
+    const cond = { Hs: m.Hs, Tp: m.Tp, dirDeg: m.dirDeg, spreadDeg: m.spreadDeg,
+                   waterLevel: m.waterLevel, slr: 0, d50: m.d50, slope: 0.020 };
+    out.extra[name] = { days: m.modelDays, dz: runProfile(cond, m.modelDays) };
+  }
+  out.storm_daily = runProfile(STORM_COND, out.storm_days, true);
+  out.case2_daily = runProfile(CASE2_COND, out.case2_days, true);
 
   fs.writeFileSync(process.env.SCORE, JSON.stringify(out, null, 1));
   console.log("precision probes -> " + process.env.SCORE);
@@ -1524,7 +1541,7 @@ if (process.env.XB_STORM || process.env.XB_CASE2) {
 
 // ============================================================ storm profile, shared
 
-function runProfile(cond, modelDays) {
+function runProfile(cond, modelDays, daily) {
   Object.assign(app.cond, cond);
   app.obstacles.length = 0;
   app.buildSolid();
@@ -1545,6 +1562,7 @@ function runProfile(cond, modelDays) {
   };
 
   const before = sample();
+  const dailyOut = [];
   const steps = 400;
   for (let k = 0; k < steps; k++) {
     // The breakpoint is measured from the breaking cells, so the wave field must exist before
@@ -1554,7 +1572,12 @@ function runProfile(cond, modelDays) {
     if (app.waveFieldStep) app.waveFieldStep(0.1);
     if (app.computeBarDist) app.computeBarDist();
     app.morphStep((modelDays * 86400) / steps);
+    if (daily && (k + 1) % Math.round(steps / modelDays) === 0) {
+      const now = sample();
+      dailyOut.push(now.map((v, i) => +(v - before[i]).toFixed(5)));
+    }
   }
+  if (daily) return dailyOut;
   const after = sample();
   return after.map((v, i) => v - before[i]);
 }

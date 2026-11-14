@@ -126,6 +126,24 @@ def main():
 
     s, m, total, cases = score(probes, refs)
 
+    # Reported, not scored: the further XBeach cases, and where the bar sits day by day.
+    extra = []
+    for name, e in (probes.get("extra") or {}).items():
+        ref = json.load(open(here + "/xbeach-reference-" + name + ".json", encoding="utf-8"))
+        xb = ref["finalDz"]
+        extra.append((name, case_scores(e["dz"], xb, ref["meta"]["reachCross"] / (len(xb) - 1))))
+    daily = []
+    for name, key in (("storm", "storm_daily"), ("moderate", "case2_daily")):
+        if probes.get(key):
+            hist = refs[name]["history"]
+            dx = refs[name]["meta"]["reachCross"] / (len(refs[name]["finalDz"]) - 1)
+            rows = []
+            for k, prof in enumerate(probes[key][:len(hist)]):
+                pos = [max(v, 0.0) for v in prof]
+                cen = sum(i * dx * v for i, v in enumerate(pos)) / max(sum(pos), 1e-9)
+                rows.append((hist[k]["day"], cen, hist[k]["centreX"], sum(pos) * dx, hist[k]["deposited"]))
+            daily.append((name, rows))
+
     if "--json" in sys.argv:
         print(json.dumps({"score": round(total, 1), "subscores": {k: round(v, 3) for k, v in s.items()},
                           "measured": m}, indent=1))
@@ -153,6 +171,22 @@ def main():
     for key, label in (("profile", "profile rmse"), ("barpos", "bar position"),
                        ("erosion", "peak erosion"), ("accretion", "peak accretion")):
         print(f"    mean {label:16} score {s[key]:5.2f}")
+
+    def line(name, c):
+        print(f"    {name:9} rmse {c['rmse']:.3f} m | barpos {c['barpos']:4.0f} m | "
+              f"ero {c['erosion']:5.2f} | acc {c['accretion']:5.2f} | centre "
+              f"{c['centroid_err']:4.0f} m apart | deposited {c['deposit_model']:.1f} / {c['deposit_xb']:.1f}")
+    if extra:
+        print("\n  Further XBeach cases [reported, not scored]:")
+        for name, c in extra:
+            line(name, c)
+        allc = cases + extra
+        print(f"    all {len(allc)} cases: mean rmse {sum(c['rmse'] for _, c in allc) / len(allc):.3f} m, "
+              f"mean centre error {sum(c['centroid_err'] for _, c in allc) / len(allc):.0f} m")
+    for name, rows in daily:
+        print(f"\n  {name}: deposit centre x by day, model / XBeach (deposited m2/m) [reported]")
+        print("    " + "  ".join(f"d{int(d)} {cm:.0f}/{cx:.0f} ({dm:.0f}/{dxb:.0f})"
+                                 for d, cm, cx, dm, dxb in rows if int(d) in (1, 2, 3, 5, 7, 10)))
 
     print(f"\n  COMPOSITE {total:.1f} / 100")
     weakest = sorted(s, key=lambda k: s[k])[:2]

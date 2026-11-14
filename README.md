@@ -21,11 +21,10 @@ years, and an XBeach case writer.
 
 Presets and teaching notes are **not built yet** (Phase 6).
 
-**XBeach status — half the gate is met.** A generated case has been built and run: it
-completes headless in ~3.5 minutes with exit 0 and produces `zb.dat`. But the plan's gate
-also asks for a bed change *in the same direction as the browser*, and **that part fails** —
-correlation between the two cross-shore change profiles is +0.07 with 39% sign agreement.
-The cause is known and is not a bug in the export: see "Agreement with XBeach" below.
+**XBeach status.** A generated case builds and runs in XBeach, and the browser model is
+scored against six recorded XBeach runs on the same bed. In the storm case the two change
+profiles correlate at 0.99 and the model moves 0.90 of XBeach's peak amplitude. See
+"Agreement with XBeach" below for what agrees and what does not.
 
 See `PLAN.md` for the full design and the phase gates.
 
@@ -40,16 +39,19 @@ See `PLAN.md` for the full design and the phase gates.
 | Runup | Stockdon et al. (2006), R2 on a plane foreshore |
 | Wave input | 1 component (monochromatic) or 7 wrapped-Gaussian directional bins |
 | Profile | Dean h = A·y^(2/3), A from Soulsby (1997) settling velocity |
-| Morphology | dz/dt = (z_eq − z)/T, storm-modified z_eq |
+| Storm profile | Dean with its slope capped at 0.023 (1 in 43), the line XBeach cuts across the waterline |
+| Cross-shore | Conservative diffusion of the bed's distance from that profile, out to a depth of closure of 2 m + 0.8·Hs |
+| Dune | Waves cut up to 0.15·Hs above the water; behind that the bed slumps at 0.3 (wet) or 1.0 (dry) |
 | Longshore | CERC, Q = K/(16(s−1))·Hb^2.5/√γ·sin(2αb) |
 | Bed change | dz/dt = −(1/(1−p))·(dQ/dy)/W_active |
 
-**Not modelled:** diffraction (a structure casts a hard shadow), infragravity, shoreline
-retreat under sea-level rise (the equilibrium profile is anchored rather than translated),
-and shoreline feedback into the breaking angle — so a groyne fillet does not feed back to
-reduce transport. The cross-shore relaxation is target-seeking and **not volume-conserving**;
-the longshore term is conservative and is kept in its own bed layer so the relaxation cannot
-erase it. The two are summed into the bed but not yet coupled.
+**Not modelled:** diffraction (a structure casts a hard shadow), infragravity, erosion of
+the bed below the waterline by storm waves, dune rebuilding (a cut dune stays cut; the beach
+in front of it recovers), and shoreline feedback into the breaking angle, so a groyne fillet
+does not feed back to reduce transport. The cross-shore and longshore terms both conserve
+sand and are kept in separate bed layers; they are summed into the bed but not yet coupled.
+Sea-level rise is handled only in a basic way: the target profile follows the water level,
+so a higher level slowly moves the profile up and inland.
 
 ## Longshore transport
 
@@ -109,27 +111,35 @@ old error and look like the patch failed.
 
 ### Agreement with XBeach
 
-Same bed, same storm (Hs 3.4 m, Tp 12 s, 0.8 m surge), same morphological time — 2.5 model
-days, which is what XBeach integrates at `tstop = 21600` with `morfac = 10`:
+Six XBeach runs on the same bed, each 10 model days (`tstop = 86400`, `morfac = 10`), are
+recorded in `dev/xbeach-reference*.json`. Five are scored; the profiles compared are the
+change in bed level averaged over the middle of the reach.
 
-| | XBeach | This interface |
-|---|---|---|
-| Peak erosion | −1.35 m at x = 465 m | −1.51 m at x = 455 m |
-| Peak accretion | +0.27 m at x = 415 m | +0.87 m |
-| Peak amplitude | 1.35 m | 1.51 m (**ratio 1.12**) |
-| Correlation of the change profiles | — | **0.837** |
+| Case | Hs (m) | Surge (m) | Profile error, rmse (m) | Sand deposited, model / XBeach (m² per m) |
+|---|---|---|---|---|
+| storm | 3.4 | 0.8 | 0.061 | 41 / 46 |
+| normal (same storm, shore-normal) | 3.4 | 0.8 | 0.056 | 41 / 53 |
+| mid | 2.7 | 0.55 | 0.124 | 27 / 29 |
+| moderate | 2.0 | 0.3 | 0.064 | 14 / 19 |
+| no surge | 3.4 | 0 | 0.162 | 15 / 43 |
 
-Before the transport rewrite these figures were −0.04 m against −1.35 m: the interface moved
-roughly 15× too little sand. Cross-shore transport as a conservative flux brought the rate to
-within 12% and the pattern to 0.84.
+In the storm case the dune scarp is at x = 480 m on day 10 in both models, and the eroded
+volume tracks XBeach day by day (14 against 14 m² per metre on day 1, 41 against 46 on
+day 10).
 
-Erosion now matches closely. Accretion is generous — the modelled bar holds about three times
-the sand XBeach deposits, which is the obvious next thing to look at. The profile is also not
-yet volume-exact against XBeach, only against itself.
+What does not agree:
 
-The comparison runs in the harness against `dev/xbeach-reference.json`. Regenerate the
-reference with `dev/build-xbeach-msys2.sh`, the storm case from the export panel, and
-`xbeach.exe` in that directory.
+- **No surge.** XBeach takes most of that sand from below the waterline. This model cannot
+  erode a submerged profile that is already at its calm shape.
+- **Bar position.** The crest sits 15 to 40 m landward of XBeach's in four of the five cases.
+- **Calm.** XBeach cuts 0.6 m into this beach under 1.2 m waves. This model holds a calm
+  beach still by design, so that run is reported and not scored.
+- **How fitted it is.** The transport rate, the depth of closure and the wave reach are fitted
+  to these six runs, which share one bed and one grain size.
+
+The composite precision score is 70.8 out of 100. `dev/PRECISION.md` records every score with
+its commit and the reason it moved. Regenerate a reference with `dev/build-xbeach-msys2.sh`,
+a case from the export panel, `xbeach.exe` in that directory, and `dev/record_xbeach.py`.
 
 ## Timeline
 
@@ -153,11 +163,16 @@ transport rate, and the current model year against the timeline position.
 
 ## Morphology
 
-The bed relaxes toward an equilibrium profile at a rate set by **model rate** (model days
-per real second) and **response** (the e-folding time). Under wave energy the equilibrium
-changes: the beach face flattens and cuts back, and a bar forms at the breakpoint. Both
-are driven by the same storm intensity, so they stay coupled — which is why a storm digs
-the upper beach and piles the sand into a bar, and why the bar decays once the storm passes.
+The bed moves toward an equilibrium profile, at a pace set by **model rate** (model days per
+real second) and by wave height. In calm the equilibrium is the Dean profile the default
+beach is built from, and nothing moves. Under storm waves the nearshore cannot hold Dean's
+steep slope, and the equilibrium becomes a gentle terrace across the waterline. The sand cut
+from above that line moves offshore and builds the bar, inside the depth of closure.
+
+Waves only cut as high as they reach. Behind that the dune slumps onto the beach a little at
+a time, so the scarp retreats through the storm and erosion keeps growing instead of
+stopping when the beach is used up. A storm response takes model days to weeks. When the
+storm passes the bar decays and the beach rebuilds to the berm top; the dune does not.
 
 ## Units and orientation
 
@@ -193,34 +208,28 @@ The harness parses the real markup, mocks p5 and the DOM, seeds every control fr
 responds correctly to its controls — storm breaks deeper than calm, spread expands to
 seven weighted components, obliquity lowers the peak, no NaN at the small-wave limit.
 
-Current run:
+Part of the current run (vlmars, 2026-11-14):
 
 ```
 field: 10710 wet cells, max depth 7.02 m, max H 1.42 m, mean H 1.230 m
 runup R2 0.476 m, Iribarren 0.183
-storm: break 3.18 m @ 4.19 m, runup 1.20 m, max H 3.43 m
-Gate A  settled 0.000 m | perturbed 0.822 m -> relaxed 0.782 m
-        volume 723600.0 -> 723600.0 bed units (0.00% drift)
-Gate B  storm bar 159.3 m offshore, intensity 0.62
-        upper profile 0.80 -> -0.03 m (-0.83)
-        bar crest     -3.56 -> -2.89 m (0.67)
-        after calm    -3.56 m (-0.67)
-profile: offshore -7.05 m, landward 8.55 m
-orientation: waterline at 74% of width
-particles: mean x 423 px, max x 840 px
-period-averaged onshore component 0.488 cells/frame
-longshore: Q zero at shore-normal, peak at 45 deg, reverses with direction
-groyne: updrift +0.0274 m, downdrift -0.0274 m
-timeline: year 7.5 -> 7.5, year 23.0 -> 3.0 (loop 20 yr)
-clipped groyne: inactive at year 5 (no change), active at year 13 (14.4 m of change)
-nourishment: not solid, raises the bed 5.00 m over 10 years
-xbeach: bed.dep 41 x 121, profile -8.00 / +7.50 m, round-trip 0.0000 m
-zip: 3 entries, all CRCs valid under python zipfile.testzip()
-xbeach run: exit 0, 22,183 timesteps (calm) and 11,620 (storm), zb.dat produced
-xbeach storm: correlation 0.837, amplitude ratio 1.12, volume conserved 0.00%
-65 checks, 0 failures
-HARNESS PASS
+break 3.18 m @ 4.19 m, runup 1.20 m, max H 3.43 m
+Gate A  settled 0.000 m | perturbed 0.822 m -> relaxed 0.814 m
+        volume 723600.0 -> 723600.0 bed units
+Gate B  storm intensity 1.00, breakpoint 159 m offshore
+        upper profile 0.80 -> 0.10 m after 10 d, -0.05 m after the long storm
+        bar after 10 d: +0.31 m at 32 m offshore
+        largest bed change 350 to 400 m offshore: 0.0000 m
+        after 125 calm days: +0.02 m where the 10-day crest was (-0.30); upper profile 0.10 -> 0.80 m
+bed round-trip: worst |browser - exported| = 0.0000 m
+reference: erosion -1.7919 m at x=475, accretion 0.4104 m at x=390
+interface: erosion -1.614 m at x=475, accretion 0.322 m
+equal morphological time (10 d): correlation 0.986 over 55 cells
+amplitude at equal time: 1.614 vs xbeach 1.792 m (ratio 0.90)
 ```
+
+89 checks. 88 pass on vlmars; the one failure is a frame-time limit recorded on a faster
+machine.
 
 Note: extracting the script and running `node --check` alone is **not** sufficient — it
 passes on a field that is silently empty. The behavioural checks are the real gate.

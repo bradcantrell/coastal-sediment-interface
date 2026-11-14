@@ -73,12 +73,14 @@ The fluvial Stam solver is **gone**. In its place, one analytic pass per frame:
   `Qb = exp(−(γh/Hrms)²)`; hard cap `H ≤ γh` at `γ = 0.78`. Stores `waveAngle`.
 - `combineComponents()` — `H² = Σ wᵢHᵢ²` over the directional bins.
 - `computeRunup()` — Stockdon et al. (2006) eq. 18, `R2 = 1.1(η + S)`, plus Iribarren.
-- `morphologyStep()` — cross-shore relaxation toward a Dean equilibrium.
+- `morphologyStep()` — cross-shore: conservative implicit diffusion of the bed's distance
+  from `equilibriumZ()`, then slumping. See "Cross-shore morphology" below.
 - `computeLongshore()` / `applyLongshore()` — CERC, conservative flux divergence.
 - `applyNourishment()` — sand placed by `kind: 'nourish'` objects.
 
-**Not modelled:** diffraction (a structure casts a hard shadow), infragravity, shoreline
-retreat under sea-level rise, and shoreline feedback into the breaking angle.
+**Not modelled:** diffraction (a structure casts a hard shadow), infragravity, erosion of the
+bed below the waterline by storm waves, dune rebuilding, and shoreline feedback into the
+breaking angle. Sea-level rise is basic: the target follows the water level.
 
 ## Bed model — three layers, and why
 
@@ -87,25 +89,64 @@ retreat under sea-level rise, and shoreline feedback into the breaking angle.
 - `userBedGrid` / `depoGrid` — owned by the interface; the drawn bed and particle deposit.
   The interface computes `userBedZ + depoZ` and hands it to the model's `bedTotal`, which
   adds the two layers below in the same order as before.
-- `morphGrid` — cross-shore relaxation. **Target-seeking, NOT volume-conserving.**
-- `longGrid` — longshore transport. **Conservative.** Kept in its own layer so the
-  non-conservative relaxation cannot erase the accretion that proves a groyne works.
-- `bedZ0 = userBedZ + depoZ` — the bed without morphology; used for the change overlay and as
-  the fixed anchor for the Dean target.
+- `morphGrid` — cross-shore change. **Conservative** since stage 4: every row keeps its sand
+  (a harness check, to 0.05 m2 per metre of shore over a 10-day storm).
+- `longGrid` — longshore transport. **Conservative.** Kept in its own layer so cross-shore
+  change cannot erase the accretion that proves a groyne works.
+- `bedZ0 = userBedZ + depoZ` — the bed without morphology; used for the change overlay and to
+  find the waterline the Dean target hangs from.
 
 The two morphology layers are summed into the bed but **not coupled**.
 
+## Cross-shore morphology (stage 4, 2026-11-14)
+
+Each of these was measured against XBeach and is covered by a check. `dev/PRECISION.md` has
+the numbers and the reasons; do not undo one without reading its entry there.
+
+- **The target, `equilibriumZ(Y, storm, A)`.** Calm: Dean seaward, `BEACH_SLOPE` landward,
+  which is the seeded bed. Storm: Dean with its slope capped at `TERRACE_SLOPE` (0.023), the
+  tangent line continuing up the beach. The two are blended by `storm`. There is no bar drawn
+  into the target; the bar is the sand cut from above the terrace.
+- **`stormIntensity()` is wave height only**: 0 at 1.2 m, 1 from 2.0 m. A surge acts through
+  the water level, not through this number.
+- **The target follows the live water level.** `shoreRefAt()` re-derives the waterline, from
+  the bed without the morphology layer, whenever the water level changes. Taking it from the
+  evolving bed makes the target chase the bed and diverge.
+- **Depth of closure.** Sand moves only shoreward of `2.0 + 0.8 * Hs` m of water; mobility is 1
+  to half that depth and falls linearly to 0. Each face uses the smaller mobility of its two
+  cells from both sides, which is what keeps the step conservative.
+- **Rate.** `TRANSPORT_D0 = 0.0023` m2/s at 1.5 m waves, linear in Hs. A storm response takes
+  model days to weeks.
+- **Wave reach.** Waves cut the bed only up to `WAVE_REACH_PER_HS` (0.15) x Hs above the live
+  water level. Sand can be put back up to `BERM_TOP_M` above it. This number is fitted and
+  the result is sensitive to it.
+- **Slump.** Behind a cell the model has lowered, the bed cannot stand steeper than 0.3 if the
+  lower cell is within wave reach, 1.0 otherwise. Both directions. This is how the dune feeds
+  the beach and why erosion keeps growing through a storm.
+- `morphZ()` and `longZ()` hold their edge value past the last cell centre. Reading zero
+  there once let the off-canvas grid row run away and leak into the scored profile.
+
+Known limits: the no-surge XBeach case (XBeach erodes below the waterline), the bar crest 15
+to 40 m landward of XBeach's, sand carried deeper than the calm depth of closure never
+returning, and no dune rebuilding.
+
 ## XBeach agreement — what is and is not true
 
-The exported case builds and runs. Against a recorded XBeach storm run on the same bed:
+The exported case builds and runs. The model is scored against six recorded XBeach runs on
+the same bed, 10 model days each (`dev/xbeach-reference*.json`, written by
+`dev/record_xbeach.py` from the middle rows 12 to 28). Five are scored; the calm run is
+reported only, because XBeach erodes a calm beach and this model holds it still by design.
 
-- **Spatial pattern: correlation 0.818.** Erosion and accretion land in the right places.
-- **Rate: wrong by ~10×.** The interface moves roughly 15× less sediment in the same time.
-- The correlation is **invariant to run time**, because a linear relaxation scales without
-  changing shape. The shape is right; only the rate and the volume budget are wrong.
+    SCORE=probes.json node dev/headless_harness.js index.html     # about 5 minutes on vlmars
+    python3 dev/precision_score.py probes.json
 
-Do not claim numerical agreement. The comparison runs in the harness against
-`dev/xbeach-reference.json`.
+- Composite 70.8 at `54ee630`. Mean profile error over the six runs 0.091 m.
+- Storm case: correlation 0.99, peak amplitude 0.90 of XBeach's, deposit 41 against 46 m2/m.
+- The transport rate, closure depth and wave reach are fitted to these runs, which share one
+  bed and one grain size. Say so when quoting agreement.
+- XBeach runs on vlio (`D:\workspace\xbeach-src`, about 8 minutes a run, CPU only, with
+  `C:\msys64\mingw64\bin` on PATH). Run folders: `D:\workspace\xb-storm-long`,
+  `xb-case2-long`, `xb-ref-normal`, `xb-ref-nosurge`, `xb-ref-mid`, `xb-ref-calm`.
 
 ## Timeline
 
@@ -131,10 +172,10 @@ zero, so the bed does not lurch on load.
 - `BEACH_SLOPE` (0.10) is the morphology's beach gradient. **`conditions.slope` is not the
   same thing** — that is the foreshore gradient feeding Stockdon runup and the Iribarren
   number. Using it for morphology dragged a 10% beach toward a 2% ramp.
-- `morphologyStep` **must not relax the dune** (`z > refWaterLevel + BERM_TOP_M`). Dean says
-  nothing about a dune.
-- The profile references **datum 0, never `conditions.waterLevel`**. If the bed follows the
-  live water level, a surge lifts the seabed with the water and nothing can erode.
+- The dune is not relaxed toward Dean. Waves cut only as high as they reach, and the dune
+  loses sand by slumping onto the beach (see "Cross-shore morphology").
+- `defaultCoastalBedZ` references **datum 0, never `conditions.waterLevel`**. Water rises over
+  a fixed bed. The *target* follows the water level; the seeded bed does not.
 
 ## Testing
 
@@ -169,8 +210,12 @@ for the tree immediately before `b76139c`, and for a while nothing recorded the 
 - `bedPoints` is empty by default. `userBedZ` MUST fall through to `defaultCoastalBedZ`.
 - Bed units are not metres. Multiply by `M_PER_BED_UNIT` before any physics.
 - `GW`/`GH` snapshotted at load time are **zero** — `setup()` assigns them later. Use getters.
-- A Dean target anchored to its own moving shoreline is degenerate and diverges. Anchor once.
-- Re-anchoring on water level cancels the storm signal exactly. Anchor once.
+- A Dean target anchored to its own moving shoreline is degenerate and diverges. The
+  waterline reference comes from the bed without the morphology layer.
+- The implicit cross-shore solve is stable at any step, and a 5-day step hides transients a
+  quarter-day step shows. Two checks only told a broken model from a working one in small steps.
+- Run the model for as long as the XBeach reference ran. The harness once compared 2.5 model
+  days with 10 and nothing failed; `refMeta()` now reads the duration from the reference.
 - The default profile must be **continuous by construction**; a vertical step at the berm
   means the waterline cannot migrate and no storm can erode the upper beach.
 - A conservative process **nets to zero**. Do not test it with a signed sum — use Σ|change|.

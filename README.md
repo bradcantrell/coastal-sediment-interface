@@ -78,8 +78,9 @@ The ZIP is made to be run on your own machine. It also holds `run.sh` and `run.b
 start the XBeach on the PATH (or the one named in `XBEACH`), a `README.md` that says how to
 run it and how to read what comes out, and `scene.json`, the scene itself. The **open**
 button in the tab row reads `scene.json`, or the ZIP as it is, and puts the drawing and the
-settings back. `run.sh` is checked here with a stand-in binary; `run.bat` has not been run
-on Windows yet.
+settings back. Checked 2026-11-15 with a ZIP made by the page: `run.bat` on Windows ran the case through
+XBeach in 96 s and wrote 21 output times of 121 x 41 values, as the case's README says, and
+prints a plain message when no XBeach is found. `run.sh` is checked with a stand-in binary.
 
 Three conversions are easy to get backwards, so they are stated in the code:
 

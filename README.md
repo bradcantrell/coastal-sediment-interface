@@ -74,6 +74,13 @@ the absolute cubic metres per second.
 The **xbeach** button writes a runnable case as a ZIP: `params.txt`, `bed.dep`, `jonswap.txt`.
 No library — the archive is built in the page.
 
+The ZIP is made to be run on your own machine. It also holds `run.sh` and `run.bat`, which
+start the XBeach on the PATH (or the one named in `XBEACH`), a `README.md` that says how to
+run it and how to read what comes out, and `scene.json`, the scene itself. The **open**
+button in the tab row reads `scene.json`, or the ZIP as it is, and puts the drawing and the
+settings back. `run.sh` is checked here with a stand-in binary; `run.bat` has not been run
+on Windows yet.
+
 Three conversions are easy to get backwards, so they are stated in the code:
 
 - **`posdwn = -1`** — bed elevations positive up, matching `bedZ`. The alternative is

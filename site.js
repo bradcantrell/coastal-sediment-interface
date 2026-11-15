@@ -231,14 +231,108 @@ function buildXBeach(opts) {
   return { params: params, bed: bed, jonswap: jonswap, nx: XB_NX, ny: XB_NY, tstop: tstop };
 }
 
-function exportXBeach() {
-  const p = buildXBeach({ hours: xbHours, morfac: xbMorfac });
-  const enc = new TextEncoder();
-  const files = [
-    { name: 'params.txt',  data: enc.encode(p.params)  },
-    { name: 'bed.dep',     data: enc.encode(p.bed)     },
-    { name: 'jonswap.txt', data: enc.encode(p.jonswap) },
+// run.sh and run.bat: one command that runs the case. They use the xbeach on the PATH, or
+// the binary named in the XBEACH variable. A ZIP made in the browser carries no executable
+// bit, so the README runs the shell script through sh.
+function xbRunSh() {
+  return [
+    '#!/bin/sh',
+    '# Runs this XBeach case:  sh run.sh',
+    '# Uses the xbeach on the PATH, or the one you name:  XBEACH=/path/to/xbeach sh run.sh',
+    'cd "$(dirname "$0")" || exit 1',
+    'XB="${XBEACH:-xbeach}"',
+    'if ! command -v "$XB" >/dev/null 2>&1; then',
+    '  echo "XBeach was not found. Put xbeach on the PATH, or run:" >&2',
+    '  echo "  XBEACH=/path/to/xbeach sh run.sh" >&2',
+    '  exit 1',
+    'fi',
+    '"$XB" || { echo "XBeach stopped with an error, see XBlog.txt" >&2; exit 1; }',
+    'echo "done. Bed levels over time are in zb.dat, the log is XBlog.txt"',
+  ].join('\n') + '\n';
+}
+
+function xbRunBat() {
+  return [
+    '@echo off',
+    'rem Runs this XBeach case. Double-click it, or run it from a command prompt.',
+    'rem Uses xbeach.exe on the PATH, or the one you name:  set XBEACH=C:\\path\\to\\xbeach.exe',
+    'cd /d "%~dp0"',
+    'if "%XBEACH%"=="" set XBEACH=xbeach.exe',
+    '"%XBEACH%"',
+    'if errorlevel 1 (',
+    '  echo.',
+    '  echo XBeach did not run or stopped with an error. If it was not found, put xbeach.exe',
+    '  echo on the PATH or set XBEACH to its full path. Otherwise see XBlog.txt.',
+    ')',
+    'pause',
+  ].join('\r\n') + '\r\n';
+}
+
+function xbReadme(p, hours, morfac) {
+  const outs = Math.floor(p.tstop / Math.max(60, Math.round(p.tstop / 20))) + 1;
+  return [
+    '# Coastal Sediment Interface -> XBeach case',
+    '',
+    'This folder is a complete XBeach case made from the scene in the interface: the bed as it',
+    'was drawn, the waves and water level as they were set.',
+    '',
+    '## Run',
+    '',
+    'You need an XBeach executable (https://xbeach.org, source at github.com/openearth/xbeach).',
+    'A serial build without netCDF is enough. Unpack the ZIP, then from this folder:',
+    '',
+    '    sh run.sh        Linux and macOS',
+    '    run.bat          Windows',
+    '',
+    'Both use the xbeach on the PATH. To use another one, set XBEACH to its full path first.',
+    'A Windows build made with MSYS2 also needs C:\\msys64\\mingw64\\bin on the PATH.',
+    'Running by hand is the same thing: start xbeach in this folder and it reads params.txt.',
+    '',
+    '## What is in the case',
+    '',
+    '    params.txt   the run: ' + p.nx + ' x ' + p.ny + ' cells, ' + hours + ' h of storm (tstop ' + p.tstop + ' s), morfac ' + morfac,
+    '    bed.dep      bed levels in metres, positive up, one cross-shore transect per row,',
+    '                 offshore first: ' + (p.ny + 1) + ' rows of ' + (p.nx + 1) + ' values',
+    '    jonswap.txt  the wave spectrum at the offshore boundary',
+    '    run.sh, run.bat   run the case',
+    '    scene.json   the scene itself, for the interface',
+    '',
+    'With morfac ' + morfac + ' the bed changes as it would over ' + (hours * morfac) + ' h.',
+    '',
+    '## What comes out',
+    '',
+    '    zb.dat   bed level        zs.dat   water level        H.dat   wave height',
+    '',
+    'Each is a plain file of 8-byte reals with no header: ' + ((p.nx + 1) * (p.ny + 1)) + ' values (' + (p.nx + 1) + ' x ' + (p.ny + 1) + ') for',
+    'each of about ' + outs + ' output times. xy.dat holds the grid, dims.dat its size, and XBlog.txt the log.',
+    'For netCDF output, use a build with netCDF and set outputformat = netcdf in params.txt.',
+    '',
+    '## Open the scene again',
+    '',
+    'In the Coastal Sediment Interface, on the coast tab, press "open" and pick scene.json or',
+    'the ZIP itself. The drawing and the settings come back; the run starts fresh.',
+  ].join('\n') + '\n';
+}
+
+// Everything the export packs, as text: the case, the scripts that run it, and the scene.
+function xbeachCaseFiles(opts) {
+  opts = opts || {};
+  const hours = opts.hours || xbHours, morfac = opts.morfac || xbMorfac;
+  const p = buildXBeach({ hours: hours, morfac: morfac });
+  return [
+    { name: 'params.txt',  text: p.params  },
+    { name: 'bed.dep',     text: p.bed     },
+    { name: 'jonswap.txt', text: p.jonswap },
+    { name: 'README.md',   text: xbReadme(p, hours, morfac) },
+    { name: 'run.sh',      text: xbRunSh() },
+    { name: 'run.bat',     text: xbRunBat() },
+    { name: 'scene.json',  text: sceneFileText() },
   ];
+}
+
+function exportXBeach() {
+  const enc = new TextEncoder();
+  const files = xbeachCaseFiles().map(function (f) { return { name: f.name, data: enc.encode(f.text) }; });
   const zip = zipStore(files);
   const blob = new Blob([zip], { type: 'application/zip' });
   const url = URL.createObjectURL(blob);
@@ -252,7 +346,7 @@ function exportXBeach() {
 
   const el = document.getElementById('xb-status');
   if (el) el.textContent = 'exported ' + (zip.length / 1024).toFixed(1) + ' KB · ' +
-                           XB_NX + 'x' + XB_NY + ' cells';
+                           XB_NX + 'x' + XB_NY + ' cells · run.sh or run.bat runs it, "open" reads it back';
 }
 
 registerBackend({

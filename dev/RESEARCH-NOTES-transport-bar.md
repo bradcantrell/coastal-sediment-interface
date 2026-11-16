@@ -68,7 +68,7 @@ but the split has to be validated against both cases, not tuned on one.
 
 ## Sweep results, for the record
 
-`dev/bar_sweep.py` swept discharge spread and erosion depth across both XBeach cases:
+A sweep script (not kept in the repo) swept discharge spread and erosion depth across both XBeach cases:
 
     wDep 0.5  maxDrop 0.68 -> 57.8
     wDep 0.85 maxDrop 0.68 -> harness fail (crest falls below the breakpoint sample)

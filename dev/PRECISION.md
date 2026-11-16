@@ -5,7 +5,6 @@ A number to optimise against, built from probes that each have a known correct a
 ```
 SCORE=probes.json node dev/headless_harness.js index.html
 python dev/precision_score.py probes.json
-python dev/score_sweep.py 0.35 0.05 0.02      # sweep a constant, re-score each value
 ```
 
 Probes are seeded (`SCORE` enables the deterministic RNG) and start from a cleaned bed, so two
@@ -250,8 +249,8 @@ Two things this shows that were not written down before:
   of the two does it was not isolated). Bar position at this resolution is that sensitive,
   which is worth knowing before tuning anything against it.
 - The harness's frame-time check ("no worse than the recorded 38 ms") is a record from
-  vlio. On vlmars under node the same tree measures 78.7 ms per frame before the move and
-  81.6 after. It fails on vlmars at every commit and is not a regression signal there.
+  a faster machine. On a slower one under node the same tree measures 78.7 ms per frame before
+  the move and 81.6 after. It fails there at every commit and is not a regression signal.
 
 
 ---
@@ -303,8 +302,8 @@ x runs from the offshore edge (0) to the dune (600 m); the still-water shoreline
 445 m. The model spreads its eroded sand as a film about 0.1 m thick over the whole seabed
 out to the offshore edge. XBeach keeps it within about 100 m of the shoreline.
 
-**XBeach's bar through time** (from the 81 slices already in the two 10-day runs on vlio,
-`D:/workspace/xb-storm-long` and `xb-case2-long`):
+**XBeach's bar through time** (from the 81 slices already in the two 10-day runs, `xb-storm-long` and
+`xb-case2-long`):
 
     storm     day 1: crest x 430, centre 405, deposited 13.6   day 5: 400, 383, 26.6   day 10: 390, 374, 35.3
     moderate  day 1: crest x 425, centre 382, deposited  5.3   day 5: 390, 361, 11.7   day 10: 370, 346, 15.5
@@ -336,8 +335,8 @@ overstated erosion and understated the bar (storm crest +0.34 m all rows, +0.41 
 The all-row profile stays in each file as `finalDzAllRows`, with each row's budget as
 `rowNet`. Effect: 54.0 → 53.2.
 
-**3. Four more XBeach cases, reported and not scored**, run on vlio on the storm bed
-(`D:/workspace/xb-ref-*`): the storm with shore-normal waves, the storm without surge, an
+**3. Four more XBeach cases, reported and not scored**, run on the storm bed
+(run folders `xb-ref-*`): the storm with shore-normal waves, the storm without surge, an
 intermediate case, and a calm case. Each reference file now also carries `history`, the
 profile summarised once per model day.
 
@@ -593,7 +592,7 @@ beside it said it should once the bar was no longer starved.
 does not come back. After the 10-day storm and 125 calm days, +0.15 m is still sitting 132 m
 offshore. This was true before this change (+0.30 m at 142 m); the old gate did not look.
 
-Two checks added (89 in all, 88 passing on vlmars with the known frame-time failure):
+Two checks added (89 in all, 88 passing with the known frame-time failure):
 - "A storm leaves the same profile whether the surge came before or after the reset" fails
   on `f5bf5c8` (0.206 m).
 - "The beach rebuilds in calm after a storm" fails when sand is not allowed back above wave
@@ -655,7 +654,7 @@ score unchanged at 72.3 (these cases are reported, not scored).
 Three new XBeach runs with 0.5 mm sand and the default bed for that grain size, which is a
 steeper seabed (9.1 m deep at the offshore edge against 7.1 m). Same beach face and dune.
 Same forcing as the storm, moderate and mid cases. References
-`dev/xbeach-reference-coarse-{storm,moderate,mid}.json`; vlio folders `D:\workspace\xb2-*`.
+`dev/xbeach-reference-coarse-{storm,moderate,mid}.json`; run folders `xb2-*`.
 The cases were written by the harness (`XB_CASE=... XB_OUT=dir`, new).
 
 | Case | rmse, 0.3 mm (m) | rmse, 0.5 mm | Eroded, model / XBeach (m2/m) | Deposit centre apart (m) |
@@ -769,7 +768,7 @@ the berm top, 1.5 m above the water, and that covers it. Whether real calm waves
 that high that fast is not something these references can say; XBeach's calm run erodes.
 The wind does the part above the berm top.
 
-Four checks added (94 in all, 93 passing on vlmars). Each compares the wind on with the wind
+Four checks added (94 in all, 93 passing; the frame-time check fails on a slower machine). Each compares the wind on with the wind
 off, and each was shown to fail:
 - "the dune does not rebuild while storm waves are running" fails with the wind left on in
   storms (0.30 m). It has to be tested where there is a dry beach to take sand from;
@@ -848,7 +847,7 @@ waves do. An earlier version of the check measured the volume lying more than 10
 and found 5.0 against 4.7 m2/m; that was measuring this layer, which swell spreads further
 out, and not the bump.
 
-One check added (95 in all, 94 passing on vlmars): "long swell flattens the storm deposit
+One check added (95 in all, 94 passing; the frame-time check fails on a slower machine): "long swell flattens the storm deposit
 that a short sea leaves offshore" fails on the previous model (0.116 m at both periods).
 
 ## Future work, marked 2026-11-14: a bar and a trough

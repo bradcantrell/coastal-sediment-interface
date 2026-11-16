@@ -1,5 +1,6 @@
 # Coastal Sediment Interface — Project Conventions
-# Auto-loaded by Hermes when working in this directory
+# Read by coding agents working in this directory. Notes about our own machines and
+# checkouts are in `AGENTS.local.md`, which git ignores; read it too if it is there.
 
 Browser-based coastal wave and beach simulator. Coastal sibling of `bradcantrell/sediment-interface`
 (fluvial) and `bradcantrell/tidal-sediment-interface`. Read `PLAN.md` before changing physics.
@@ -17,8 +18,9 @@ no backend. p5.js 1.11.3 from cdnjs.
 
 - **Never edit `index.html` or `dev/interface_harness.js` here.** They are copies;
   `dev/core.lock` records the commit and hashes, and the interface harness fails if one
-  drifts. To change the interface: change it in `/mnt/vault/projects/sediment-interface`,
-  run that repo's harness, commit there, run `dev/sync_core.sh` here, and run both
+  drifts. To change the interface: change it in the `sediment-interface` repo,
+  run that repo's harness, commit there, run `dev/sync_core.sh` here (it reads a
+  `sediment-interface` checkout next to this one, or the path you give it), and run both
   harnesses here. How the interface is organised and its rules are in
   `sediment-interface/AGENTS.md`.
 - **The model reaches the interface through hooks**, registered at the bottom of `model.js`
@@ -158,7 +160,7 @@ the same bed, 10 model days each (`dev/xbeach-reference*.json`, written by
 `dev/record_xbeach.py` from the middle rows 12 to 28). Eight runs are scored (five here, three on a second beach); the calm run is
 reported only, because XBeach erodes a calm beach and this model holds it still by design.
 
-    SCORE=probes.json node dev/headless_harness.js index.html     # about 5 minutes on vlmars
+    SCORE=probes.json node dev/headless_harness.js index.html     # about 5 minutes
     python3 dev/precision_score.py probes.json
 
 - Composite 80.4 on eight cases (80.2 on the first five). The basis changed twice on 2026-11-14 with the model unchanged: bar position
@@ -176,8 +178,8 @@ reported only, because XBeach erodes a calm beach and this model holds it still 
 - To make a new case: `XB_CASE='{"Hs":2.7,"d50":0.5,...}' XB_OUT=dir node dev/headless_harness.js
   index.html` writes the XBeach inputs and `conditions.json`; run XBeach in that folder; then
   `python3 dev/record_xbeach.py dir 86400 10 dev/xbeach-reference-NAME.json dir/conditions.json`.
-- XBeach runs on vlio (`D:\workspace\xbeach-src`, about 8 minutes a run, CPU only, with
-  `C:\msys64\mingw64\bin` on PATH). Run folders: `D:\workspace\xb-storm-long`,
+- An XBeach run takes about 8 minutes, CPU only. A Windows build made with MSYS2 needs
+  `C:\msys64\mingw64\bin` on PATH. The reference run folders were `xb-storm-long`,
   `xb-case2-long`, `xb-ref-normal`, `xb-ref-nosurge`, `xb-ref-mid`, `xb-ref-calm`, `xb2-storm`,
   `xb2-moderate`, `xb2-mid`.
 
@@ -224,9 +226,9 @@ repo's checks to it (the vendored copies match the lock, the XBeach backend is m
 The probe scripts (`conv_diag.js`, `edge_probe.js`, `interior_probe.js`, `flicker_probe.js`)
 load the page the same way.
 
-One check fails on vlmars and is not a regression: "frame time no worse than the recorded
-38 ms". That number was recorded on vlio; the same tree measures about 80 ms per frame under
-node here, before and after the move (78.7 and 81.6).
+One check can fail on a slower machine and is not a regression: "frame time no worse than
+the recorded 38 ms". That number was recorded on a faster machine; on a slower one the same
+tree measures about 80 ms per frame under node, before and after the move (78.7 and 81.6).
 
 `node --check` alone is **not** a gate — it passes on a silently empty field.
 
@@ -265,7 +267,7 @@ for the tree immediately before `b76139c`, and for a while nothing recorded the 
 /c/msys64/usr/bin/bash.exe dev/build-xbeach-msys2.sh [destination]
 ```
 
-Default destination `D:/workspace/xbeach-src`; binary at `<destination>/src/xbeach/.libs/xbeach.exe`.
+Default destination `./xbeach-src`; binary at `<destination>/src/xbeach/.libs/xbeach.exe`.
 Verified from a clean clone. Two traps:
 
 - `scripts/generate.py` imports `mako` and produces all 27 `.inc` files. Without it the build
@@ -279,10 +281,8 @@ look like it failed. MSYS2 has no `git` of its own — it is a declared dependen
 
 ## Related
 
-- Shared interface and river model: repo `sediment-interface`, `/mnt/vault/projects/sediment-interface` on vlmars, `D:/workspace/sediment-interface` on vlio.
-- This repo on vlmars: `/mnt/vault/projects/coastal-sediment-interface`.
-- Tidal: `D:/workspace/tidal-sediment-interface` (Venice lagoon sibling).
-- XBeach source/build: `D:/workspace/xbeach-src`.
+- Shared interface and river model: repo `bradcantrell/sediment-interface`.
+- Tidal: repo `bradcantrell/tidal-sediment-interface` (Venice lagoon sibling).
 - Design rationale and phase gates: `PLAN.md`.
 
 ## Drawing a bed transect

@@ -3,11 +3,11 @@
 #
 #   /c/msys64/usr/bin/bash.exe dev/build-xbeach-msys2.sh [destination]
 #
-# Default destination is /d/workspace/xbeach-src. Produces
+# Default destination is ./xbeach-src. Produces
 # <destination>/src/xbeach/.libs/xbeach.exe, serial, without MPI or netCDF.
 set -euo pipefail
 
-DEST="${1:-/d/workspace/xbeach-src}"
+DEST="${1:-$PWD/xbeach-src}"
 SRC_URL="https://github.com/openearth/xbeach.git"
 
 echo "== pacman dependencies =="

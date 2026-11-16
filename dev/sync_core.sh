@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pull the shared interface from a sediment-interface checkout into this repo.
 #
-#   dev/sync_core.sh [path-to-sediment-interface]
+#   dev/sync_core.sh [path-to-sediment-interface]   (default: ../sediment-interface)
 #
 # index.html (the interface) and its harness are owned by the public sediment-interface repo
 # and vendored here byte for byte. The harness is stored as dev/interface_harness.js, because
@@ -11,7 +11,7 @@
 # sediment-interface, commit there, then run this. model.js and site.js are this repo's own.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
-src="${1:-/mnt/vault/projects/sediment-interface}"
+src="${1:-$here/../sediment-interface}"
 # source path in sediment-interface : path here
 pairs=("index.html:index.html" "dev/headless_harness.js:dev/interface_harness.js")
 

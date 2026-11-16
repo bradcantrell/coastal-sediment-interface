@@ -1,7 +1,7 @@
 ## Performance
 
 Measured, not asserted. `BENCH=1 node dev/headless_harness.js index.html` prints the frame
-profile; `dev/coastal_swarm.py` runs the adversarial review that found the first three items.
+profile. An adversarial review (below) found the first three items.
 
 | | before | after |
 |---|---|---|
@@ -33,9 +33,9 @@ decision rather than quietly assumed.
 
 ## Adversarial review
 
-`dev/coastal_swarm.py` runs three lenses — performance, accuracy, export alignment — against
-both Gemma and Qwen3.8, sequentially (one local worker serializes; parallel calls just queue
-and time out). Reports land in `dev/swarm-reports/`.
+A review script ran three lenses — performance, accuracy, export alignment — against
+both Gemma and Qwen3.8 on a local model server, one call at a time. The script and its
+reports were working tools and are not kept in the repo; what they found is recorded here.
 
 Pairing the two families is the point: a model shares its own blind spots. Where they agree,
 the finding is probably real — both ranked `updateBedBuffer` CRITICAL at ~90 ms. Where they

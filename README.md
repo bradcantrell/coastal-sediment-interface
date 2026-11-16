@@ -105,7 +105,7 @@ whole recipe is scripted:
 /c/msys64/usr/bin/bash.exe dev/build-xbeach-msys2.sh [destination]
 ```
 
-Default destination is `D:/workspace/xbeach-src`; the binary lands at
+Default destination is `xbeach-src` in the current folder; the binary lands at
 `<destination>/src/xbeach/.libs/xbeach.exe`. Verified from a clean clone.
 
 Three things are needed beyond a bare toolchain. `scripts/generate.py` produces the
@@ -236,7 +236,7 @@ The harness parses the real markup, mocks p5 and the DOM, seeds every control fr
 responds correctly to its controls — storm breaks deeper than calm, spread expands to
 seven weighted components, obliquity lowers the peak, no NaN at the small-wave limit.
 
-Part of the current run (vlmars, 2026-11-14):
+Part of the current run (2026-11-14):
 
 ```
 field: 10710 wet cells, max depth 7.02 m, max H 1.42 m, mean H 1.230 m
@@ -256,7 +256,7 @@ equal morphological time (10 d): correlation 0.986 over 55 cells
 amplitude at equal time: 1.614 vs xbeach 1.792 m (ratio 0.90)
 ```
 
-95 checks. 94 pass on vlmars; the one failure is a frame-time limit recorded on a faster
+95 checks. 94 pass on a slower machine; the one failure is a frame-time limit recorded on a faster
 machine.
 
 Note: extracting the script and running `node --check` alone is **not** sufficient — it

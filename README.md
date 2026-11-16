@@ -222,6 +222,8 @@ python -m http.server 8102
 
 then open <http://localhost:8102/>.
 
+New to it? Press **? guide** in the bottom left corner, or the `?` key, for a walkthrough that lights up each part of the screen and explains it. The key list along the bottom shows whenever the run is paused.
+
 ## Testing
 
 ```

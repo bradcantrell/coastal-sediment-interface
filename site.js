@@ -352,6 +352,12 @@ function exportXBeach() {
 registerBackend({
   id: 'xbeach',
   title: 'Coastal Sediment Interface',
+  // This site's step in the interface's guide (see THE GUIDE in index.html).
+  guide: [
+    { id: 'xbeach', target: guideSection('export-xb', 'xb-status'), title: 'Export to XBeach', text:
+      `<p><b>xbeach</b> writes this beach and these waves as a case for XBeach, a model coastal engineers widely use to test storms against beaches and dunes, and downloads it as a ZIP. Inside are the ground, the wave conditions, a README, scripts to run it on Mac, Linux or Windows, and scene.json, which is this scene.</p>
+       <p><b>run</b> is how many hours of storm to simulate. <b>morfac</b> speeds up the beach change, so a short run stands for a longer one. At 10, each hour of waves changes the beach as much as ten would. The line underneath says whether the case has been exported.</p>` },
+  ],
   mount(slot) {
     // The sidebar is a flex column with a gap; the slot is a plain block, so this keeps the
     // rows spaced the way the rest of the sidebar is.

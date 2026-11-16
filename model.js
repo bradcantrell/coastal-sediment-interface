@@ -1198,6 +1198,27 @@ function coastalStep() {
 registerModel({
   id: 'coast',
 
+  // The coast's steps in the interface's guide (see THE GUIDE in index.html).
+  guide: [
+    { id: 'coast', after: 'welcome', title: 'The coast', text:
+      `<p>This model is a beach seen from above. The sea is on the left and the land is on the right, with the dune at the far right edge. Waves come in from the left, break as the water gets shallow and run up the beach.</p>
+       <p>Time here is model years, and the <b>year</b> line in the numbers counts them. One second on screen stands for days of model time, so you can watch a beach change over seasons and storms. Use it to ask what a groyne, a breakwater or a nourishment does to the shore over years.</p>` },
+    { id: 'coast-nourish', after: 'draw', target: guideCanvas, title: 'Nourishment', text:
+      `<p>Press <b>4</b> to place a nourishment instead of a solid object. A nourishment is sand added to the beach, the way coastal managers rebuild a shore that is wearing away.</p>
+       <p>The waves pass over it rather than around it. While it is in place it adds sand to the ground under it, about half a meter a model year. Watch where the waves take that sand afterwards.</p>` },
+    { id: 'coast-waves', after: 'thumb', target: guideSection('reset-coastal', 'coastal-readout'), title: 'Waves and water', text:
+      `<p>These are the conditions the beach faces. <b>preset</b> loads a set of them, a calm summer, a winter storm, the recovery after a storm, or SLR 2100, a calm summer with 0.9 meters of sea level rise. Moving any slider switches it back to custom.</p>
+       <p><b>Hs</b> is the wave height, the average of the biggest third of the waves. <b>Tp</b> is the time between wave crests. Longer periods are swell from far away, and at the same height they carry more energy. <b>direction</b> is the angle the waves arrive from, where 0 is straight at the shore, and <b>spread</b> is how much that angle varies.</p>
+       <p><b>water level</b> is the tide or a storm surge, and <b>SLR</b> is sea level rise added on top. <b>D50</b> is the grain size of the sand in millimeters. Fine sand is about 0.2 and coarse sand about 1. <b>slope</b> is how steep the beach is.</p>
+       <p>The blue lines read the result. How high the waves are where they break and how deep the water is there, how far up the beach they run (<b>runup R2</b>), and <b>ξ</b>, which says how they break, spilling gently on a flat beach or plunging and surging on a steep one.</p>` },
+    { id: 'coast-morph', after: 'coast-waves', target: guideSection('reset-morph', 'morph-readout'), title: 'How the beach changes', text:
+      `<p>This section is the beach changing shape over time. <b>model rate</b> is how many days of model time pass each second, so you can watch years go by in a minute. <b>dune</b> is how much sand the wind adds to the dune each year. <b>longshore</b> is how strongly the waves carry sand along the shore rather than up and down it.</p>
+       <p>The orange lines read the change. The most <b>erosion</b> and <b>accretion</b> so far, how stormy the waves are, where they break, and how much sand is moving along the shore.</p>
+       <p><b>clear</b> wipes the change and starts the beach again. <b>conv</b> is a check on the model itself. It runs the same stretch of time in smaller steps and reports how much the answer moves. A small number means the size of the step is not what is driving the answer.</p>` },
+    { id: 'coast-physics', after: 'coast-morph', target: guideSection('reset-physics', 'erosion-prob'), title: 'Grains', text:
+      `<p>These four set how the moving grains you see behave. <b>settle thresh</b> is the speed below which a grain can settle, and <b>settle prob</b> is how likely it is to settle each moment once it is that slow. <b>erode thresh</b> and <b>erode prob</b> are the same for lifting a deposit back up. <b>reset</b> puts them back.</p>` },
+  ],
+
   // The bed is drawn on both sides of still water.
   bed: { zMin: BED_Z_MIN, zMax: BED_Z_MAX, datumLabel: 'still water' },
   defaultBedZ: defaultCoastalBedZ,

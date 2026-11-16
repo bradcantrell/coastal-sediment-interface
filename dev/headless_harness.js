@@ -1639,7 +1639,62 @@ if (process.env.PROBE) {
   check(onAtStart && nOn === 1 && litOn > 0 && nOff === 0 && litOff === 0 && sOn === 1 && sOff === 0 && blurOk,
         "waves and smooth are on when the page opens, waves draws crests only when on, smooth blurs the wash only when on",
         `on at start ${onAtStart}, crests drawn ${nOn} (lit ${litOn}) / off ${nOff}, wash softened ${sOn} / off ${sOff}, blur ${blur.filter}`);
+  // Both are saved with the scene and put back from it.
+  const kept = app.run(`(() => { showWaves = false; smoothWash = false; const sc = captureScene();
+    showWaves = true; smoothWash = true; applySavedScene(sc); const back = [showWaves, smoothWash];
+    showWaves = true; smoothWash = false; const sc2 = captureScene(); showWaves = false; smoothWash = true; applySavedScene(sc2);
+    const back2 = [showWaves, smoothWash]; showWaves = true; smoothWash = true;
+    return JSON.stringify({ saved: sc.view.model, back, back2 }); })()`);
+  const kp = JSON.parse(kept);
+  check(kp.back[0] === false && kp.back[1] === false && kp.back2[0] === true && kp.back2[1] === false,
+        "waves and smooth are saved with the scene and put back", kept);
   Object.assign(app.cond, { Hs: 1.20, Tp: 8.0, dirDeg: 0, spreadDeg: 0, waterLevel: 0 });
+  app.resetMorph(); app.waveFieldStep();
+}
+
+console.log("");
+// --- along the shore: the bed evens out from row to row, sand is kept, a structure stops it;
+//     and a grain's deposit is sized by model time, not by the frame
+{
+  Object.assign(app.cond, { Hs: 1.20, Tp: 8.0, dirDeg: 0, spreadDeg: 0, waterLevel: 0 });
+  app.resetMorph(); app.waveFieldStep();
+  const r = JSON.parse(app.run(`(() => {
+    const keepSolid = solid.slice(), keepDepo = depoGrid.slice();
+    depoGrid.fill(0);
+    // A wet cell in the surf zone halfway along, found from the live bed.
+    const gy = Math.floor(GH / 2), gyA = gy - 6, gyB = gy + 6;
+    let gx = -1;
+    for (let g = 0; g < GW; g++) { const z = bedZ((g + 0.5) * DEPO_CELL, (gy + 0.5) * DEPO_CELL) * M_PER_BED_UNIT; if (z < -1.5 && z > -3) gx = g; }
+    const at = (g, x) => morphGrid[g * GW + x];
+    const run = (wall) => {
+      resetMorphology(); solid.set(keepSolid);
+      if (wall) { const x = (gx + 0.5) * DEPO_CELL; for (let i = 0; i <= NX + 1; i++) solid[IX(i, Math.round(((gyB - 0.5) * DEPO_CELL) / cellH))] = 1; }
+      for (const g of [gyA, gyB]) morphGrid[g * GW + gx] = 20;     // one metre up, two rows
+      let colBefore = 0; for (let g = 0; g < GH; g++) colBefore += at(g, gx);
+      const tot0 = morphGrid.reduce((a, v) => a + v, 0);
+      morphologyStep(3600);
+      const tot1 = morphGrid.reduce((a, v) => a + v, 0);
+      return { nbA: at(gyA + 1, gx), nbB: at(gyB - 1, gx), peakA: at(gyA, gx), tot0, tot1 };
+    };
+    const open = run(false), walled = run(true);
+    resetMorphology(); solid.set(keepSolid); depoGrid.set(keepDepo);
+    // Deposit size: the same grain at the default rate and at four times the model time.
+    const keep = lastDtModel;
+    lastDtModel = DEPO_DT_REF; const a1 = model.rules.depositAmount();
+    lastDtModel = 4 * DEPO_DT_REF; const a4 = model.rules.depositAmount();
+    lastDtModel = keep;
+    return JSON.stringify({ gx, open, walled, a1, a4, ref: DEPO_AMOUNT });
+  })()`));
+  const o = r.open, w = r.walled;
+  const spreads = o.nbA > 0.01 && o.nbB > 0.01 && o.peakA < 20;
+  const kept = Math.abs(o.tot1 - o.tot0) / Math.abs(o.tot0 || 1) < 0.02;
+  const stopped = Math.abs(w.nbB) < 1e-3 * w.nbA && w.nbA > 0.01;
+  const sized = Math.abs(r.a1 - r.ref) < 1e-9 && Math.abs(r.a4 - 4 * r.ref) < 1e-9;
+  check(r.gx >= 0 && spreads && kept && stopped && sized,
+        "along the shore a bump spreads to the next rows and sand is kept, a structure stops it, and a grain's deposit grows with model time",
+        `cell ${r.gx}: bump 1 m -> ${(o.peakA * 0.05).toFixed(2)} m, next rows +${(o.nbA * 50).toFixed(1)}/+${(o.nbB * 50).toFixed(1)} mm, ` +
+        `sand ${o.tot0.toFixed(1)} -> ${o.tot1.toFixed(1)}, behind a wall ${(w.nbB * 50).toFixed(3)} mm (open side +${(w.nbA * 50).toFixed(1)}), ` +
+        `deposit ${r.a1} at the default rate, ${r.a4} at four times`);
   app.resetMorph(); app.waveFieldStep();
 }
 

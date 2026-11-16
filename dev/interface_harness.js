@@ -37,7 +37,8 @@
 //                                     while the run is stopped
 //  9d. streaks and resizing        — grains drawn as streaks along their path (dots when the
 //                                     toggle is off, the choice saved), and a resize stretching
-//                                     the scene so a save after it comes back in place
+//                                     the scene so a save after it comes back in place, and a
+//                                     model's own view toggles saved with the scene
 //  10. the site's own checks        — dev/site_checks.js, if there is one
 //  11. nothing has gone non-finite
 //
@@ -698,6 +699,29 @@ try {
     check(n.slope >= P * 0.9 && n.chance >= P * 0.9 && n.boost >= P * 0.9, "sediment's response to the bed comes from the model's rules when it has them", `${P} particles: slope ${n.slope}, bed settle ${n.chance}, boost ${n.boost}`);
     app.setBedPoints(savedBed); app.rebuildUserBedGrid();
   }
+
+  {
+    // A model can size a grain's deposit (the coast ties it to model time). The grain keeps
+    // its amount, so when the water lifts it again the bed loses what it gained.
+    const res = withHook(m.rules, "depositAmount", () => 10, () => app.run(`(() => {
+      const keep = { depo: depoGrid.slice(), dep: deposited.slice(), parts: particles.slice(), et: erosionThresh, ep: erosionProb };
+      const i = Math.floor(GW / 2), j = Math.floor(GH / 2), q = j * GW + i;
+      const before = depoGrid[q];
+      deposited.length = 0;
+      settleParticle({ x: (i + 0.5) * DEPO_CELL, y: (j + 0.5) * DEPO_CELL }, 0);
+      const added = depoGrid[q] - before, amt = deposited.length === 1 ? deposited[0].amt : null;
+      // Every chance taken: a high bed resists lifting, and that is a dice roll too.
+      particles = []; erosionThresh = -1; erosionProb = 1;
+      const r0 = globalThis.random; globalThis.random = (a, b) => (a === undefined ? 0 : b === undefined ? 0 : a);
+      try { updateParticles(); } finally { globalThis.random = r0; }
+      const back = depoGrid[q] - before, lifted = deposited.length === 0;
+      depoGrid.set(keep.depo); deposited = keep.dep; particles = keep.parts; erosionThresh = keep.et; erosionProb = keep.ep;
+      return { added, amt, back, lifted };
+    })()`));
+    check(Math.abs(res.added - 5) < 1e-6 && res.amt === 10 && res.lifted && Math.abs(res.back) < 1e-6,
+          "a model can size a grain's deposit, and lifting the grain takes back the same amount",
+          `deposit 10 -> ${res.added.toFixed(2)} at the centre (half), kept ${res.amt}, after lifting ${res.back.toFixed(3)}`);
+  }
 }
 
 // ---------------------------------------------------------------- 8. the model's own checks
@@ -1035,6 +1059,21 @@ try {
         `fractions ${f0.map(v => v.toFixed(3)).join("/")} -> resized ${f1.map(v => v.toFixed(3)).join("/")} -> reloaded ${f2.map(v => v.toFixed(3)).join("/")}`);
   app.run(`resizeCanvas(${W0}, ${H0}); cellW = width / (NX + 2); cellH = height / (NY + 2)`);
   app.setObstacles(obs0); app.setBedPoints(bed0); app.run("solidMaskDirty = true");
+
+  // A model's own view toggles (the coast's waves and smooth) go into the scene through
+  // viewState() and come back through applyViewState(). A stand-in model state is used here
+  // so the check runs on every site, whether or not its model has toggles of its own.
+  const hadVS = app.run("model.viewState"), hadAVS = app.run("model.applyViewState");
+  app.run("globalThis.__mv = { a: true, b: 3 }; model.viewState = () => Object.assign({}, __mv); model.applyViewState = (v) => { __mv = Object.assign({}, v); }");
+  app.run("saveScene()");
+  app.run("__mv = { a: false, b: 0 }");
+  app.run("applySavedScene")(app.run("readSavedScene()"));
+  const mv = app.run("__mv");
+  check(mv.a === true && mv.b === 3, "a model's own view toggles are saved with the scene and put back",
+        `got ${JSON.stringify(mv)}`);
+  app.run("model.viewState = undefined; model.applyViewState = undefined; delete globalThis.__mv");
+  if (hadVS) app.run("model").viewState = hadVS;
+  if (hadAVS) app.run("model").applyViewState = hadAVS;
   global.__store.clear(); app.setPaused(true);
 }
 

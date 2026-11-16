@@ -163,6 +163,24 @@ const TRANSPORT_D0   = 0.0023;
 
 const TRANSPORT_HREF = 1.5;
 
+// Alongshore spreading. The cross-shore step above works on each row by itself, so nothing
+// evened the bed out from one row to the next, and the grains' deposits, which land at random,
+// grew into stripes across the shore over a long run (120 storm days: 0.15 m of row-to-row
+// roughness at 2.9 h steps, 0.30 m at 0.8 h). The same exchange now runs along each column,
+// at the same diffusivity, over all the wet bed within wave reach, and stops at a structure,
+// so a groyne still holds the sand on its updrift side. It reaches past the depth of closure
+// on purpose: the grains settle out there too, and limited to the cross-shore mobility it
+// left their deposits standing (0.32 m rough against 0.05 m, 40 storm days at 8.6 h steps).
+// On a straight beach every row is the same and this moves nothing.
+const ALONG_D_FACTOR = 1.0;   // alongshore diffusivity as a multiple of the cross-shore one   // alongshore diffusivity as a multiple of the cross-shore one
+
+// The grains' deposits are sand settling out of the water, so they arrive at a rate in
+// model time. A grain used to add the same height on every frame it settled, so the bed
+// grew faster per model day the slower the model ran, or the faster the machine drew.
+// A grain now carries DEPO_AMOUNT for every DEPO_DT_REF of model time in its frame: the
+// amount it always carried at the default rate (2 model days a second at 60 frames).
+const DEPO_DT_REF = (1 / 60) * 2.0 * 86400;   // model seconds
+
 // Depth of closure in metres below the live water level: 2 m + 0.8 Hs. Seaward of it the bed
 // does not move; mobility falls linearly to zero over the outer half of that depth. XBeach's
 // deposit ends at 2.8 m depth in the calm run and 4 to 5.4 m in the storm runs. Without this
@@ -714,7 +732,15 @@ function morphologyStep(dtModel) {
       act: new Uint8Array(GW),
     };
   }
-  const { u, un, diag, low, up, rhs, act, mob, zr } = _morphScratch;
+  if (!_morphScratch.Z || _morphScratch.Z.length !== GW * GH) {
+    _morphScratch.Z = new Float64Array(GW * GH);      // the bed after the cross-shore step, m
+    _morphScratch.M = new Uint8Array(GW * GH);        // 1 where it can move along the shore
+    const n = Math.max(GW, GH);
+    Object.assign(_morphScratch, { cu: new Float64Array(n), cn: new Float64Array(n), cd: new Float64Array(n),
+      cl: new Float64Array(n), cp: new Float64Array(n), cr: new Float64Array(n) });
+  }
+  const { u, un, diag, low, up, rhs, act, mob, zr, Z, M } = _morphScratch;
+  M.fill(0);
 
   for (let gy = 0; gy < GH; gy++) {
     const xShore = shoreRefAt(gy);
@@ -746,6 +772,12 @@ function morphologyStep(dtModel) {
       any = true;
     }
     if (!any) continue;
+    for (let gx = 0; gx < GW; gx++) {
+      const x = (gx + 0.5) * DEPO_CELL;
+      // A structure stops the exchange along the shore as it does in the field.
+      const solidHere = solid[IX(Math.min(NX + 1, Math.round(x / cellW)), Math.min(NY + 1, Math.round(y / cellH)))];
+      M[gy * GW + gx] = (act[gx] && !solidHere && zr[gx] < reach) ? 1 : 0;
+    }
 
     // Implicit tridiagonal: (I - r*L) u_new = u. The exchange across each face is weighted by
     // the less mobile of its two cells, and the same weight is used from both sides, so what
@@ -852,6 +884,39 @@ function morphologyStep(dtModel) {
           morphGrid[idx] += t / M_PER_BED_UNIT;
         }
       }
+    }
+    for (let gx = 0; gx < GW; gx++) Z[gy * GW + gx] = zr[gx];
+  }
+
+  // Alongshore: the same implicit exchange down each column, on the bed itself. Sand moves
+  // only between two neighbouring wet cells, the same amount out of one as into the other,
+  // so it is conserved, and nothing crosses a structure, the dry beach or a row with no
+  // shoreline.
+  const dy = DEPO_CELL * (REACH_ALONGSHORE / Math.max(height, 1));
+  const ry = ALONG_D_FACTOR * (D / (1 - POR)) * dtModel / (dy * dy);
+  const { cu, cn, cd, cl, cp, cr } = _morphScratch;
+  for (let gx = 0; gx < GW; gx++) {
+    let any = false;
+    for (let gy = 0; gy < GH; gy++) {
+      const q = gy * GW + gx;
+      const fU = (gy > 0      && M[q] && M[q - GW]) ? ry : 0;
+      const fD = (gy < GH - 1 && M[q] && M[q + GW]) ? ry : 0;
+      if (fU || fD) any = true;
+      cl[gy] = -fU; cp[gy] = -fD; cd[gy] = 1 + fU + fD; cr[gy] = cu[gy] = Z[q];
+    }
+    if (!any) continue;
+    for (let gy = 1; gy < GH; gy++) {
+      const f = cl[gy] / cd[gy - 1];
+      cd[gy] -= f * cp[gy - 1];
+      cr[gy] -= f * cr[gy - 1];
+    }
+    cn[GH - 1] = cr[GH - 1] / cd[GH - 1];
+    for (let gy = GH - 2; gy >= 0; gy--) cn[gy] = (cr[gy] - cp[gy] * cn[gy + 1]) / cd[gy];
+    for (let gy = 0; gy < GH; gy++) {
+      const du = cn[gy] - cu[gy];
+      if (!isFinite(du) || du === 0) continue;
+      const q = gy * GW + gx;
+      morphGrid[q] = Math.max(-300, Math.min(300, morphGrid[q] + du / M_PER_BED_UNIT));
     }
   }
 
@@ -1493,6 +1558,13 @@ registerModel({
   help: '4 nourish',
   drawUnderlay: drawWaveCrests,
   updateToggles: coastUpdateToggles,
+  // Both toggles are saved with the scene, so the page opens the way it was left.
+  viewState() { return { waves: showWaves, smooth: smoothWash }; },
+  applyViewState(v) {
+    if (typeof v.waves === 'boolean') showWaves = v.waves;
+    if (typeof v.smooth === 'boolean') smoothWash = v.smooth;
+    coastUpdateToggles();
+  },
   render: { slowColor: '#ff44aa', fastColor: '#ddeeff', flowOpacity: 140 },
 
   // The timeline runs on model years.
@@ -1532,6 +1604,7 @@ registerModel({
     get erosionProb() { return erosionProb; },
     minTravelX: MIN_TRAVEL_X, minAge: MIN_PARTICLE_AGE, maxAge: MAX_PARTICLE_AGE,
     bedSettleOnBed: 1,
+    depositAmount() { return lastDtModel > 0 ? DEPO_AMOUNT * lastDtModel / DEPO_DT_REF : DEPO_AMOUNT; },
     // Sediment slides on the dry beach only, and gently: under water the waves move it.
     slope(p, gradX, gradY, bedHere) {
       if (bedHere > 0) {

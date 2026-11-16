@@ -43,6 +43,7 @@ See `PLAN.md` for the full design and the phase gates.
 | Cross-shore | Conservative diffusion of the bed's distance from that profile, fading out around a depth of closure of 2 m + 0.8·Hs, deeper under long-period swell |
 | Dune | Waves cut up to 0.15·Hs above the water; behind that the bed slumps at 0.3 (wet) or 1.0 (dry) |
 | Dune recovery | Wind moves sand from the dry beach to a cut dune at a set rate (default 10 m³/m/yr), in calm only |
+| Alongshore spreading | The same diffusion run along the shore over the wet bed, stopped by structures |
 | Longshore | CERC, Q = K/(16(s−1))·Hb^2.5/√γ·sin(2αb) |
 | Bed change | dz/dt = −(1/(1−p))·(dQ/dy)/W_active |
 
@@ -53,6 +54,12 @@ does not feed back to reduce transport. The cross-shore and longshore terms both
 sand and are kept in separate bed layers; they are summed into the bed but not yet coupled.
 Sea-level rise is handled only in a basic way: the target profile follows the water level,
 so a higher level slowly moves the profile up and inland.
+
+The grains that settle become part of the bed. The waves see what the grains leave
+behind, and the bed model moves those deposits like any other sand. Each grain adds to the
+bed in proportion to the model time since the last frame, so the bed builds at the same rate
+per model day no matter the model rate or frame rate. Spreading the bed a little along the
+shore keeps the deposits from growing into stripes across the beach.
 
 ## Longshore transport
 
@@ -186,11 +193,11 @@ The readout reports breaking wave height and depth, Stockdon runup, the Iribarre
 and breaker type, erosion and accretion rates, storm intensity, bar distance, longshore
 transport rate, and the current model year against the timeline position.
 
-Two view toggles are on when the page opens. **waves** draws the model's wave field as moving
-crests (closer together in shallow water, bending as they come in at an angle, white where
-they break), and **smooth** softens the wash that shows where the beach has built up or worn
-away. The **streak** toggle, which the river interface has too, is also on and draws each
-grain as a line along its path.
+Three view toggles are on when the page opens. **waves** draws the model's wave field as
+moving crests (closer together in shallow water, bending as they come in at an angle, white
+where they break). **smooth** softens the color wash that shows where the beach has built up
+or worn away. **streak** draws each grain as a line along its path. The page saves all three
+along with the scene.
 
 ## Morphology
 
@@ -263,7 +270,7 @@ equal morphological time (10 d): correlation 0.986 over 55 cells
 amplitude at equal time: 1.614 vs xbeach 1.792 m (ratio 0.90)
 ```
 
-97 checks. 96 pass on a slower machine; the one failure is a frame-time limit recorded on a faster
+99 checks. 98 pass on a slower machine; the one failure is a frame-time limit recorded on a faster
 machine.
 
 Note: extracting the script and running `node --check` alone is **not** sufficient — it

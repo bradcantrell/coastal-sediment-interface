@@ -102,7 +102,11 @@ bed below the waterline by storm waves, and shoreline feedback into the breaking
 
 - `userBedGrid` / `depoGrid` — owned by the interface; the drawn bed and particle deposit.
   The interface computes `userBedZ + depoZ` and hands it to the model's `bedTotal`, which
-  adds the two layers below in the same order as before.
+  adds the two layers below in the same order as before. The grains' deposits are part of
+  the bed the waves see and the morphology moves, on purpose (Brad, 2026-11-16: the bed
+  should come from the deposits). A grain's deposit is sized by model time
+  (`rules.depositAmount()`: `DEPO_AMOUNT` per `DEPO_DT_REF`, the default rate at 60 frames),
+  so the bed grows at the same rate per model day at any rate slider or frame rate.
 - `morphGrid` — cross-shore change. **Conservative** since stage 4: every row keeps its sand
   (a harness check, to 0.05 m2 per metre of shore over a 10-day storm).
 - `longGrid` — longshore transport. **Conservative.** Kept in its own layer so cross-shore
@@ -147,6 +151,16 @@ the numbers and the reasons; do not undo one without reading its entry there.
   at `duneRate` m3 per metre per year (the "dune" slider in the morphology panel, default 10). Off under
   storm waves. Not fitted to anything: XBeach has no wind. Calm waves alone rebuild the beach
   to the berm top, which covers most of a scarp; the wind does the part above that.
+- **Alongshore exchange.** After the rows, the same implicit diffusion runs down each column
+  at the same diffusivity (`ALONG_D_FACTOR` = 1), over every wet cell within wave reach, and
+  not across a structure, the dry beach or a row with no shoreline. Conservative. Without it
+  the grains' random deposits grew into stripes across the shore (120 storm days, Hs 3.4 m,
+  three groynes: row-to-row roughness 0.30 m at 0.8 h steps, 0.15 m at 2.9 h; deposits off,
+  0). With it: 0.027, 0.039 and 0.047 m at 0.8, 2.9 and 8.6 h steps, largest change 1.7 to
+  1.8 m at all three. It reaches past the depth of closure because grains settle there too;
+  held to the cross-shore mobility it left them standing (0.32 m against 0.05 m). Score
+  unchanged at 80.4: the XBeach runs are the same in every row. The harness checks the
+  spreading, conservation, the structure and the deposit size.
 - `morphZ()` and `longZ()` hold their edge value past the last cell centre. Reading zero
   there once let the off-canvas grid row run away and leak into the scored profile.
 
@@ -228,8 +242,8 @@ zero, so the bed does not lurch on load.
 ## Testing
 
 ```
-node dev/headless_harness.js index.html      # the coastal model and the export: 97 checks
-node dev/interface_harness.js index.html     # the shared interface under this model: 60 checks
+node dev/headless_harness.js index.html      # the coastal model and the export: 99 checks
+node dev/interface_harness.js index.html     # the shared interface under this model: 62 checks
 ```
 
 Run both. `headless_harness.js` is this repo's; it loads the page the way a browser does

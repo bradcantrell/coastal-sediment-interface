@@ -243,7 +243,7 @@ zero, so the bed does not lurch on load.
 
 ```
 node dev/headless_harness.js index.html      # the coastal model and the export: 99 checks
-node dev/interface_harness.js index.html     # the shared interface under this model: 63 checks
+node dev/interface_harness.js index.html     # the shared interface under this model: 64 checks
 ```
 
 Run both. `headless_harness.js` is this repo's; it loads the page the way a browser does

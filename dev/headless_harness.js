@@ -242,6 +242,7 @@ try {
   setup: typeof setup==='function'?setup:null,
   draw: typeof draw==='function'?draw:null,
   waveFieldStep: typeof waveFieldStep==='function'?waveFieldStep:null,
+  run: (code) => eval(code),
   computeBarDist: typeof computeBarDistance==='function'?computeBarDistance:null,
   getState: () => ({
     comps: typeof waveComponents!=='undefined' ? waveComponents : null,
@@ -1580,6 +1581,66 @@ if (process.env.PROBE) {
           "particles fill the reach rather than the left edge",
           `mean x ${(meanX / width * 100).toFixed(0)}% of width, ${(leftTenth * 100).toFixed(0)}% in the left tenth`);
   }
+}
+
+// --- the waves toggle draws the model's own wave field, and smooth softens the wash
+// Crests: the spacing is the wavenumber at each cell's depth (closer in shallow water), rows
+// are offset by the alongshore wavenumber the waves arrive with, there are none where the
+// model has no waves, and the phase carries through a structure so crests line up behind it.
+{
+  Object.assign(app.cond, { Hs: 2.0, Tp: 10.0, dirDeg: 20, spreadDeg: 0, waterLevel: 0 });
+  app.resetMorph(); app.waveFieldStep();
+  const f = app.run("waveCrestField()"), H = app.getState().H, D = app.getState().D;
+  const IXf = (i, j) => app.run(`IX(${i}, ${j})`), NXv = app.run("NX"), NYv = app.run("NY");
+  const j = Math.floor(NYv / 2);
+  const wet = []; for (let i = 1; i <= NXv; i++) { const q = IXf(i, j); if (H[q] > 1e-3 && D[q] > 0.05 && !app.run(`solid[${q}]`)) wet.push(i); }
+  const iOff = wet[2], iIn = wet[wet.length - 3];
+  const dphi = (i) => f.phase[IXf(i, j)] - f.phase[IXf(i - 1, j)];
+  const kdx = (i) => { const q = IXf(i, j); return app.run(`wavenumberK(${app.cond.Tp}, ${D[q]}) * Math.cos(waveAngle[${q}])`) * f.dxm; };
+  const spacingOk = Math.abs(dphi(iOff) - kdx(iOff)) < 1e-4 && Math.abs(dphi(iIn) - kdx(iIn)) < 1e-4 && dphi(iIn) > dphi(iOff) * 1.2;
+  const k0 = app.run(`wavenumberK(${app.cond.Tp}, Math.max(waveDepth[IX(1, ${Math.floor(NYv / 2)})], 0.5))`);
+  const rowStep = f.phase[IXf(0, j + 1)] - f.phase[IXf(0, j)], want = k0 * Math.sin(20 * Math.PI / 180) * f.dym;
+  const obliqueOk = want > 0 && Math.abs(rowStep - want) < 1e-6 * Math.max(1, want);
+  let dryOk = true, scaleOk = true, ratio = null;
+  for (let q = 0; q < H.length; q++) {
+    if (!(H[q] > 1e-3 && D[q] > 0.05) && f.amp[q] !== 0) dryOk = false;
+    if (H[q] > 1e-3 && D[q] > 0.05 && f.amp[q] > 0) { const r = H[q] / f.amp[q]; if (ratio === null) ratio = r; else if (Math.abs(r - ratio) > 1e-4 * ratio) scaleOk = false; }
+  }
+  const iS = wet[Math.floor(wet.length / 3)], iD = wet[Math.floor(wet.length / 3) + 6], qS = IXf(iS, j);
+  const before = f.phase[IXf(iD, j)];
+  app.run(`solid[${qS}] = 1`); const g = app.run("waveCrestField()"); const after = g.phase[IXf(iD, j)], gapAmp = g.amp[qS];
+  app.run(`solid[${qS}] = 0`); app.run("waveCrestField()");
+  const carryOk = gapAmp === 0 && Math.abs(after - before) < 0.05;
+  check(spacingOk && obliqueOk && dryOk && scaleOk && carryOk,
+        "drawn crests follow the model's wave field: closer in shallow water, offset along the shore, none where there are no waves, in line behind a structure",
+        `dφ offshore ${dphi(iOff).toFixed(3)} / inshore ${dphi(iIn).toFixed(3)} rad per cell (k·dx ${kdx(iOff).toFixed(3)} / ${kdx(iIn).toFixed(3)}), ` +
+        `row offset ${rowStep.toFixed(4)} vs ${want.toFixed(4)}, dry cells clear ${dryOk}, height-scaled ${scaleOk}, through a structure Δφ ${(after - before).toFixed(3)} rad`);
+
+  // The toggles: both on when the page opens. waves draws the crests each frame and nothing
+  // when off; smooth blurs the wash on every bed refresh and not when off.
+  const onAtStart = app.run("showWaves === true && smoothWash === true");
+  const draws = () => app.run(`(() => { let n = 0; const g = drawingContext, d = g.drawImage; g.drawImage = () => { n++; };
+    const lit = model.drawUnderlay(); g.drawImage = d; return [n, lit]; })()`);
+  const [nOn, litOn] = draws();
+  app.run("showWaves = false"); const [nOff, litOff] = draws(); app.run("showWaves = true");
+  const softens = () => app.run(`(() => { let n = 0; const s0 = softenBedSurface; softenBedSurface = () => { n++; return true; };
+    updateBedBuffer(); softenBedSurface = s0; return n; })()`);
+  const sOn = softens(); app.run("smoothWash = false"); const sOff = softens(); app.run("smoothWash = true");
+  // And the softening itself: the bed surface is redrawn from a blurred copy of itself.
+  const blur = app.run(`(() => { const rec = { cleared: 0, drawn: 0 }, scratch = { filter: '' };
+    const fake = { width: 400, height: 300, getContext: () => ({ save() {}, restore() {}, setTransform() {},
+      clearRect() { rec.cleared++; }, drawImage(src) { if (src === washScratch) rec.drawn++; } }) };
+    const b0 = bedSurface; bedSurface = Object.assign({}, b0, { elt: fake });
+    washScratch = { width: 0, height: 0, getContext: () => ({ clearRect() {}, drawImage() {},
+      set filter(v) { scratch.filter = v; }, get filter() { return scratch.filter; } }) };
+    const ok = softenBedSurface(); bedSurface = b0; washScratch = null;
+    return { ok, filter: scratch.filter, cleared: rec.cleared, drawn: rec.drawn }; })()`);
+  const blurOk = blur.ok && /^blur\(\d+px\)$/.test(blur.filter) && blur.cleared === 1 && blur.drawn === 1;
+  check(onAtStart && nOn === 1 && litOn > 0 && nOff === 0 && litOff === 0 && sOn === 1 && sOff === 0 && blurOk,
+        "waves and smooth are on when the page opens, waves draws crests only when on, smooth blurs the wash only when on",
+        `on at start ${onAtStart}, crests drawn ${nOn} (lit ${litOn}) / off ${nOff}, wash softened ${sOn} / off ${sOff}, blur ${blur.filter}`);
+  Object.assign(app.cond, { Hs: 1.20, Tp: 8.0, dirDeg: 0, spreadDeg: 0, waterLevel: 0 });
+  app.resetMorph(); app.waveFieldStep();
 }
 
 console.log("");

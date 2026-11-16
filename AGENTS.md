@@ -52,6 +52,18 @@ live at https://bradcantrell.github.io/coastal-sediment-interface/ and takes ~75
 after a push. Going private **deletes the Pages configuration**; making it public again does
 not restore it — re-run `POST /repos/{owner}/{repo}/pages`.
 
+## Drawing the waves and the wash (the waves and smooth toggles)
+
+- **waves** (on by default) draws the wave field as moving crests: `waveCrestField()` adds up
+  the phase shoreward along each row from the offshore alongshore wavenumber, using
+  `wavenumberK` at each cell's depth and `waveAngle`; `drawWaveCrests()` (the `drawUnderlay`
+  hook) paints a quarter-size image and screens it over the bed. The phase carries through a
+  structure. The crests move on `simTime` at the peak period. About 5 ms a frame at 1330 px
+  in headless Chrome.
+- **smooth** (on by default) blurs the wash and the dry-beach ramp in `coastalRenderBed()`
+  before the contours are drawn (`softenBedSurface()`); the contours stay sharp.
+- Neither changes the model. Two checks cover them (crests follow the field; the toggles).
+
 ## Units and geometry
 
 **Metres and seconds.** A deliberate departure from the tidal interface, which is
@@ -80,7 +92,8 @@ The fluvial Stam solver is **gone**. In its place, one analytic pass per frame:
 - `computeLongshore()` / `applyLongshore()` — CERC, conservative flux divergence.
 - `applyNourishment()` — sand placed by `kind: 'nourish'` objects.
 
-**Not modelled:** diffraction (a structure casts a hard shadow), infragravity, erosion of the
+**Not modelled:** diffraction and sheltering (a structure stops waves only in its own cells; the shoreward
+march carries the wave height past it, so there is no shadow behind it, measured 2026-11-15), infragravity, erosion of the
 bed below the waterline by storm waves, and shoreline feedback into the breaking angle. Sea-level rise is basic: the target follows the water level.
 
 ## Bed model — three layers, and why
@@ -215,8 +228,8 @@ zero, so the bed does not lurch on load.
 ## Testing
 
 ```
-node dev/headless_harness.js index.html      # the coastal model and the export: 95 checks
-node dev/interface_harness.js index.html     # the shared interface under this model: 58 checks
+node dev/headless_harness.js index.html      # the coastal model and the export: 97 checks
+node dev/interface_harness.js index.html     # the shared interface under this model: 60 checks
 ```
 
 Run both. `headless_harness.js` is this repo's; it loads the page the way a browser does

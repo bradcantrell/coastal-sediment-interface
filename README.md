@@ -46,7 +46,8 @@ See `PLAN.md` for the full design and the phase gates.
 | Longshore | CERC, Q = K/(16(s−1))·Hb^2.5/√γ·sin(2αb) |
 | Bed change | dz/dt = −(1/(1−p))·(dQ/dy)/W_active |
 
-**Not modelled:** diffraction (a structure casts a hard shadow), infragravity, erosion of
+**Not modelled:** diffraction and sheltering (a structure stops waves only in its own cells; the shoreward
+march carries the wave height past it, so there is no shadow behind it, measured 2026-11-15), infragravity, erosion of
 the bed below the waterline by storm waves, and shoreline feedback into the breaking angle, so a groyne fillet
 does not feed back to reduce transport. The cross-shore and longshore terms both conserve
 sand and are kept in separate bed layers; they are summed into the bed but not yet coupled.
@@ -185,6 +186,12 @@ The readout reports breaking wave height and depth, Stockdon runup, the Iribarre
 and breaker type, erosion and accretion rates, storm intensity, bar distance, longshore
 transport rate, and the current model year against the timeline position.
 
+Two view toggles are on when the page opens. **waves** draws the model's wave field as moving
+crests (closer together in shallow water, bending as they come in at an angle, white where
+they break), and **smooth** softens the wash that shows where the beach has built up or worn
+away. The **streak** toggle, which the river interface has too, is also on and draws each
+grain as a line along its path.
+
 ## Morphology
 
 The bed moves toward an equilibrium profile, at a pace set by **model rate** (model days per
@@ -256,7 +263,7 @@ equal morphological time (10 d): correlation 0.986 over 55 cells
 amplitude at equal time: 1.614 vs xbeach 1.792 m (ratio 0.90)
 ```
 
-95 checks. 94 pass on a slower machine; the one failure is a frame-time limit recorded on a faster
+97 checks. 96 pass on a slower machine; the one failure is a frame-time limit recorded on a faster
 machine.
 
 Note: extracting the script and running `node --check` alone is **not** sufficient — it

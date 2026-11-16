@@ -1112,6 +1112,10 @@ function coastalRenderBed() {
     }
   }
 
+  // The wash and the ramp are painted in 8 px blocks; smooth softens them into one wash.
+  // The contours below stay sharp.
+  if (smoothWash) softenBedSurface();
+
   // Contours, straight off the sampled grid -- no further bed lookups.
   const levels = [20, 40, 60, 80, 100, 120, 140];
   for (const lvl of levels) {
@@ -1195,11 +1199,120 @@ function coastalStep() {
   if (morphEnabled && (frameCount % 8 === 0)) updateBedBuffer();
 }
 
+
+// ─────────────────────────────────────────────
+// DRAWING THE WAVES, AND A SOFTER WASH
+// ─────────────────────────────────────────────
+// The waves toggle draws this model's wave field as moving crests. Height, depth, angle and
+// breaking are the model's (waveH, waveDepth, waveAngle, waveBreaking). The crest spacing is the
+// wavenumber at each cell's depth, and the phase is added up shoreward along each row from the
+// alongshore wavenumber the offshore waves arrive with, so crests close up, turn and break where
+// the model says the waves do, and leave a gap where it has no waves (behind a structure, on
+// land). They move on the model clock at the peak period, the clock the grains sway on.
+let showWaves = true, smoothWash = true;
+const CREST_SCALE = 4;                 // px of canvas per pixel of the crest image
+let crestPhase = null, crestAmp = null, crestBreak = null, crestCanvas = null, crestImg = null;
+
+function waveCrestField() {
+  const N = (NX + 2) * (NY + 2);
+  if (!crestPhase || crestPhase.length !== N) {
+    crestPhase = new Float32Array(N); crestAmp = new Float32Array(N); crestBreak = new Float32Array(N);
+  }
+  const T = conditions.Tp;
+  const dxm = cellW * (REACH_CROSSSHORE / Math.max(width, 1)), dym = cellH * (REACH_ALONGSHORE / Math.max(height, 1));
+  const k0 = wavenumberK(T, Math.max(waveDepth[IX(1, (NY / 2) | 0)] || 5, 0.5));
+  const ky = k0 * Math.sin(conditions.dirDeg * Math.PI / 180);
+  let hmax = 1e-3;
+  for (let j = 0; j <= NY + 1; j++) {
+    let ph = ky * j * dym, kp;
+    for (let i = 0; i <= NX + 1; i++) {
+      const idx = IX(i, j), h = waveDepth[idx], H = waveH[idx];
+      if (h > 0.05 && H > 1e-3 && !solid[idx]) {
+        const k = wavenumberK(T, h, kp); kp = k;
+        ph += k * Math.cos(waveAngle[idx]) * dxm;
+        crestAmp[idx] = H; if (H > hmax) hmax = H;
+      } else {
+        crestAmp[idx] = 0;
+        if (solid[idx] && kp) ph += kp * dxm;   // the phase carries through a structure, so crests line up behind it
+      }
+      crestPhase[idx] = ph; crestBreak[idx] = waveBreaking[idx] ? 1 : 0;
+    }
+  }
+  for (let q = 0; q < N; q++) crestAmp[q] /= hmax;
+  return { phase: crestPhase, amp: crestAmp, brk: crestBreak, dxm, dym };
+}
+
+function drawWaveCrests() {
+  if (!showWaves) return 0;
+  waveCrestField();
+  const cw = Math.ceil(width / CREST_SCALE), ch = Math.ceil(height / CREST_SCALE);
+  if (!crestCanvas || crestCanvas.width !== cw || crestCanvas.height !== ch) {
+    crestCanvas = document.createElement('canvas'); crestCanvas.width = cw; crestCanvas.height = ch;
+    crestImg = crestCanvas.getContext('2d').createImageData(cw, ch);
+  }
+  const px = crestImg.data, wt = simTime * 2 * Math.PI / conditions.Tp;
+  const sx = CREST_SCALE / cellW, sy = CREST_SCALE / cellH;
+  let lit = 0;
+  for (let y = 0; y < ch; y++) {
+    const fy = y * sy, j0 = Math.min(NY, Math.floor(fy)), ty = fy - j0;
+    for (let x = 0; x < cw; x++) {
+      const fx = x * sx, i0 = Math.min(NX, Math.floor(fx)), tx = fx - i0;
+      const a = IX(i0, j0), b = IX(i0 + 1, j0), c = IX(i0, j0 + 1), d = IX(i0 + 1, j0 + 1);
+      const w00 = (1 - tx) * (1 - ty), w10 = tx * (1 - ty), w01 = (1 - tx) * ty, w11 = tx * ty;
+      const A = crestAmp[a] * w00 + crestAmp[b] * w10 + crestAmp[c] * w01 + crestAmp[d] * w11;
+      const o = (y * cw + x) * 4;
+      if (A < 0.01) { px[o + 3] = 0; continue; }
+      const P = crestPhase[a] * w00 + crestPhase[b] * w10 + crestPhase[c] * w01 + crestPhase[d] * w11;
+      const B = crestBreak[a] * w00 + crestBreak[b] * w10 + crestBreak[c] * w01 + crestBreak[d] * w11;
+      const cs = Math.cos(P - wt), c1 = cs > 0 ? cs : 0, c2 = c1 * c1, c4 = c2 * c2, crest = c4 * c4 * c1;
+      let foam = 0;
+      if (B > 0.01) {
+        const f = Math.cos(P - wt - 0.5), f1 = f > 0 ? f : 0, sp = Math.sin(x * 12.9898 + y * 78.233 + wt * 3);
+        foam = Math.min(1, 0.9 * B * f1 * f1 * f1 * (0.6 + 0.4 * sp * sp));
+      }
+      const v = Math.min(1, crest * A * 0.6 + 0.1 * A * (0.5 + 0.5 * cs));
+      px[o] = 160 + 75 * foam; px[o + 1] = 225 + 20 * foam; px[o + 2] = 235 + 20 * foam;
+      px[o + 3] = 255 * Math.min(1, v + foam);
+      if (v + foam > 0.3) lit++;
+    }
+  }
+  crestCanvas.getContext('2d').putImageData(crestImg, 0, 0);
+  const g = drawingContext;
+  g.save(); g.globalCompositeOperation = 'screen'; g.imageSmoothingEnabled = true;
+  g.drawImage(crestCanvas, 0, 0, width, height); g.restore();
+  return lit;
+}
+
+// Blur the blocks of the wash and the dry-beach ramp into one soft layer, in place.
+let washScratch = null;
+function softenBedSurface() {
+  const c = bedSurface && (bedSurface.elt || bedSurface.canvas);
+  if (!c || typeof c.getContext !== 'function') return false;
+  if (!washScratch) washScratch = document.createElement('canvas');
+  washScratch.width = c.width; washScratch.height = c.height;
+  const t = washScratch.getContext('2d');
+  t.clearRect(0, 0, c.width, c.height);
+  t.filter = `blur(${Math.max(3, Math.round(c.width / 220))}px)`;
+  t.drawImage(c, 0, 0);
+  const g = c.getContext('2d');
+  g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, c.width, c.height); g.drawImage(washScratch, 0, 0); g.restore();
+  return true;
+}
+
+function coastUpdateToggles() {
+  const w = document.getElementById('toggle-waves'), m = document.getElementById('toggle-smooth');
+  if (w) w.className = showWaves ? 'tg-on' : 'tg-off';
+  if (m) m.className = smoothWash ? 'tg-on' : 'tg-off';
+}
+
 registerModel({
   id: 'coast',
 
   // The coast's steps in the interface's guide (see THE GUIDE in index.html).
   guide: [
+    { id: 'coast-view', after: 'toggles', target: ['#toggle-waves', '#toggle-smooth'], title: 'Waves and the wash', text:
+      `<p><b>waves</b> draws the wave crests the model works out. They close up as the water gets shallow, bend as they come in at an angle, and turn white where the model has them breaking. Where a groyne or a breakwater stands there is a gap in the crests.</p>
+       <p><b>smooth</b> softens the colored wash that shows where the beach has changed. Warm colors show sand building up and blue shows it wearing away. Turn it off to see the cells the model works on.</p>` },
     { id: 'coast', after: 'welcome', title: 'The coast', text:
       `<p>This model is a beach seen from above. The sea is on the left and the land is on the right, with the dune at the far right edge. Waves come in from the left, break as the water gets shallow and run up the beach.</p>
        <p>Time here is model years, and the <b>year</b> line in the numbers counts them. One second on screen stands for days of model time, so you can watch a beach change over seasons and storms. Use it to ask what a groyne, a breakwater or a nourishment does to the shore over years.</p>` },
@@ -1276,6 +1389,7 @@ registerModel({
 <div class="ctrl-row"><label>erode thresh <span class="val" id="erosion-thresh-val">1.00</span></label><input type="range" id="erosion-thresh" min="0.2" max="3.0" value="1.0" step="0.01"></div>
 <div class="ctrl-row"><label>erode prob <span class="val" id="erosion-prob-val">0.02</span></label><input type="range" id="erosion-prob" min="0.005" max="0.1" value="0.02" step="0.005"></div>
 `,
+    toggles: `<button id="toggle-waves" class="tg-on">waves</button><button id="toggle-smooth" class="tg-on">smooth</button>`,
     wire() {
       // ---- Coastal conditions
       const CP = {
@@ -1363,6 +1477,10 @@ registerModel({
       document.getElementById('erosion-thresh').addEventListener('input', function(){erosionThresh=parseFloat(this.value);document.getElementById('erosion-thresh-val').textContent=erosionThresh.toFixed(2);});
       document.getElementById('erosion-prob').addEventListener('input', function(){erosionProb=parseFloat(this.value);document.getElementById('erosion-prob-val').textContent=erosionProb.toFixed(3);});
 
+      document.getElementById('toggle-waves').addEventListener('click', function () { showWaves = !showWaves; coastUpdateToggles(); });
+      document.getElementById('toggle-smooth').addEventListener('click', function () { smoothWash = !smoothWash; updateBedBuffer(); coastUpdateToggles(); });
+      coastUpdateToggles();
+
       document.getElementById('reset-physics').addEventListener('click',function(){
         settleThresh=0.20;erosionThresh=1.0;settleProb=0.012;erosionProb=0.02;
         document.getElementById('settle-thresh').value=0.20;document.getElementById('settle-thresh-val').textContent='0.20';
@@ -1373,6 +1491,8 @@ registerModel({
     },
   },
   help: '4 nourish',
+  drawUnderlay: drawWaveCrests,
+  updateToggles: coastUpdateToggles,
   render: { slowColor: '#ff44aa', fastColor: '#ddeeff', flowOpacity: 140 },
 
   // The timeline runs on model years.

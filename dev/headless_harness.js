@@ -1064,6 +1064,34 @@ console.log("\n=== xbeach export ===");
   }
 }
 
+// ============================================================ a resize keeps the moved bed with the scene
+// The coast's own layers (cross-shore, longshore, the grains' pickups) stretch with the canvas.
+// Until 2026-11-17 they kept their old size: past the old edge nothing could move, and a resize
+// mid-storm put the erosion 99 m seaward of the waterline instead of landward of it.
+if (!process.env.SCORE) {
+  const r = JSON.parse(app.run(`(() => {
+    const W0 = width, H0 = height, keepM = morphGrid.slice(), keepL = longGrid.slice();
+    morphGrid.fill(0); longGrid.fill(0);
+    const gi = Math.floor(width * 0.6 / DEPO_CELL), gj = Math.floor(height * 0.5 / DEPO_CELL);
+    morphGrid[gj * GW + gi] = -40; longGrid[gj * GW + gi] = 20;
+    const at = (g) => { let m = 0, k = 0; for (let q = 0; q < g.length; q++) if (Math.abs(g[q]) > m) { m = Math.abs(g[q]); k = q; }
+      return [((k % GW + 0.5) * DEPO_CELL) / width, ((Math.floor(k / GW) + 0.5) * DEPO_CELL) / height]; };
+    const m0 = at(morphGrid);
+    windowWidth = W0 + 270 + 360; windowHeight = H0 + 160; windowResized();
+    const ok = morphGrid.length === GW * GH && longGrid.length === GW * GH && pickGrid.length === GW * GH;
+    const m1 = at(morphGrid), l1 = at(longGrid);
+    // a few steps on the new grid stay finite
+    for (let i = 0; i < 5; i++) coastalStep();
+    const fin = morphGrid.every(Number.isFinite) && longGrid.every(Number.isFinite);
+    windowWidth = W0 + 270; windowHeight = H0; windowResized();
+    morphGrid.fill(0); longGrid.fill(0);
+    if (keepM.length === morphGrid.length) { morphGrid.set(keepM); longGrid.set(keepL); }
+    return JSON.stringify({ ok, fin, m0, m1, l1 }); })()`));
+  const same = (a, b) => Math.abs(a[0] - b[0]) < 0.01 && Math.abs(a[1] - b[1]) < 0.01;
+  check(r.ok && r.fin && same(r.m0, r.m1) && same(r.m0, r.l1), "a resize stretches the coast's moved bed with the scene",
+        `layers sized ${r.ok}, finite ${r.fin}; mark at ${r.m0.map(v => v.toFixed(3)).join(",")} -> ${r.m1.map(v => v.toFixed(3)).join(",")} (cross-shore), ${r.l1.map(v => v.toFixed(3)).join(",")} (longshore)`);
+}
+
 // ============================================================ the grains move sand, they do not make it
 // With the particles on, a grain takes its sand from where the waves stir the bed and puts the
 // same down where it settles. Until 2026-11-17 grains appeared from nothing and every one

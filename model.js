@@ -1605,6 +1605,18 @@ registerModel({
   defaultBedZ: defaultCoastalBedZ,
   // z is the drawn bed plus deposit; the model adds what the waves have moved.
   bedTotal(z, x, y) { return z + morphZ(x, y) + longZ(x, y) + pickZ(x, y); },
+  // The window changed size: the model's own bed layers stretch with the scene, as the
+  // interface's deposit does. (The coast registered no gridResized before 2026-11-17, so past
+  // the old canvas edge there was no moved bed, and a resize mid-storm moved the erosion from
+  // landward of the waterline to 99 m seaward of it.) The waterline the target hangs from is
+  // found again on the new grid.
+  gridResized(ogw, ogh) {
+    if (!(ogw && ogh)) return;
+    if (morphGrid && morphGrid.length === ogw * ogh) morphGrid = resampleBedGrid(morphGrid, ogw, ogh);
+    if (longGrid && longGrid.length === ogw * ogh) longGrid = resampleBedGrid(longGrid, ogw, ogh);
+    if (pickGrid && pickGrid.length === ogw * ogh) pickGrid = resampleBedGrid(pickGrid, ogw, ogh);
+    shoreRef = null;
+  },
   bedGridsReady() {
     morphGrid = new Float32Array(GW * GH);
     longGrid = new Float32Array(GW * GH);

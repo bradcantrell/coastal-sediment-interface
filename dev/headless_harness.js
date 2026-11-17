@@ -256,6 +256,7 @@ try {
     U: typeof u!=='undefined' ? u : null,
     P: typeof particles!=='undefined' ? particles : null,
     depo: typeof depoGrid!=='undefined' ? depoGrid : null,
+    pick: typeof pickGrid!=='undefined' ? pickGrid : null,
     qPeak: typeof qPeak!=='undefined' ? qPeak : null,
     qMean: typeof qMean!=='undefined' ? qMean : null,
     qLong: typeof qLong!=='undefined' ? qLong : null,
@@ -816,6 +817,65 @@ app.obstacles.pop();
 app.buildSolid();
 app.resetMorph();
 
+// --- Groynes over time, with the full step (waves, cross-shore, drift)
+// Until the 2026-11-17 stress test a groyne blocked all of the drift or none of it, switching
+// where its tip passed the outer breaker, and next to one the cross-shore and longshore layers
+// grew against each other by about 11 m a year until both hit their clamps. These run the
+// whole coastalStep, as the page does, at half-day steps.
+{
+  const saved = app.run("JSON.stringify({ c: conditions, r: modelDaysPerSec, y: modelYears })");
+  const setup = (tipX) => app.run(`
+    Object.assign(conditions, { Hs: 2.0, Tp: 9, dirDeg: 20, spreadDeg: 0, waterLevel: 0, d50: 0.3, slope: 0.02 });
+    modelDaysPerSec = 8.333; globalThis.deltaTime = 60;
+    obstacles.length = 0;
+    ${tipX === null ? "" : `obstacles.push({ type: 'rect', kind: 'structure', x: (${tipX} + width) / 2, y: 0.5 * height, w: width - ${tipX}, h: 0.02 * height, rotation: 0, clips: [{ start: 0, dur: 1e6 }] });`}
+    longGrid.fill(0); morphGrid.fill(0); shoreRef = null; modelYears = 0; solidMaskDirty = true;`);
+  const stepTo = (yr) => app.run(`while (modelYears < ${yr}) coastalStep(); modelYears`);
+  // the surf zone in the middle row, on the open beach
+  setup(null); app.waveFieldStep();
+  const zone = app.run(`(() => { const j = Math.round(NY / 2); let b = -1, sh = -1;
+    for (let i = 1; i <= NX; i++) { if (b < 0 && waveBreaking[IX(i, j)]) b = i; if (depthAt(i, j) <= 0.05) { sh = i; break; } }
+    return { b: b * cellW, s: sh * cellW }; })()`);
+  // updrift fillet volume (m3) after 60 model days, for groynes reaching across a share of it
+  const trapped = (f) => {
+    setup(f > 0 ? zone.s - f * (zone.s - zone.b) : null); stepTo(60 / 365);
+    return app.run(`(() => { const a = (DEPO_CELL * REACH_CROSSSHORE / width) * (DEPO_CELL * REACH_ALONGSHORE / height);
+      let v = 0; const gy0 = Math.floor(0.5 * height / DEPO_CELL);
+      for (let gy = 0; gy < gy0 - 3; gy++) for (let gx = 0; gx < GW; gx++) { const z = longGrid[gy * GW + gx]; if (z > 0) v += z; }
+      return v * M_PER_BED_UNIT * a; })()`);
+  };
+  const shares = [0.3, 0.6, 0.9, 1.3], vols = shares.map(trapped);
+  const open = trapped(0);                          // no groyne: what the measure reads on a plain beach
+  console.log(`surf zone ${zone.b.toFixed(0)}..${zone.s.toFixed(0)} px; fillet after 60 days by groyne reach: ` +
+              shares.map((f, k) => `${f}: ${vols[k].toFixed(0)} m3`).join(", ") + `; open beach ${open.toFixed(0)} m3`);
+  const rising = vols.every((v, k) => k === 0 || v > vols[k - 1]);
+  // A short groyne fills to its tip quickly and then passes sand: what it can hold grows with
+  // the square of its length, so a third of the reach holds a few percent of a full one.
+  check(rising && vols[0] > 10 * Math.max(open, 1), "a groyne traps more the further it reaches, and a short one traps some",
+        vols.map(v => v.toFixed(0)).join(" < ") + ` m3, open beach ${open.toFixed(0)}`);
+  check(vols[3] - vols[2] < 2 * (vols[2] - vols[1]) + 0.05 * vols[3], "trapping grows smoothly past the breakers, with no switch",
+        `0.6 -> 0.9: +${(vols[2] - vols[1]).toFixed(0)}, 0.9 -> 1.3: +${(vols[3] - vols[2]).toFixed(0)} m3`);
+
+  // two years next to a groyne that crosses the surf zone
+  setup(zone.b - 40);
+  const ext = () => app.run(`(() => { let lm = 0, mm = 0, bm = 0, clamp = 0;
+    for (let q = 0; q < longGrid.length; q++) { const a = longGrid[q], b = morphGrid[q];
+      lm = Math.max(lm, Math.abs(a)); mm = Math.max(mm, Math.abs(b)); bm = Math.max(bm, Math.abs(a + b));
+      if (Math.abs(a) >= 299 || Math.abs(b) >= 299) clamp++; }
+    return { long: lm * M_PER_BED_UNIT, morph: mm * M_PER_BED_UNIT, bed: bm * M_PER_BED_UNIT, clamp }; })()`);
+  stepTo(1); const y1 = ext(); stepTo(2); const y2 = ext();
+  console.log(`groyne, 2 years: year 1 long ${y1.long.toFixed(2)} morph ${y1.morph.toFixed(2)} bed ${y1.bed.toFixed(2)} m; ` +
+              `year 2 long ${y2.long.toFixed(2)} morph ${y2.morph.toFixed(2)} bed ${y2.bed.toFixed(2)} m; ${y2.clamp} cells at a clamp`);
+  check(y2.clamp === 0 && y2.long < 10 && y2.morph < 10, "next to a groyne no layer runs to its clamp in two years",
+        `largest long ${y2.long.toFixed(2)} m, morph ${y2.morph.toFixed(2)} m`);
+  check(y2.long - y1.long < y1.long, "the fillet slows as it fills", `+${y1.long.toFixed(2)} m in year 1, +${(y2.long - y1.long).toFixed(2)} m in year 2`);
+
+  setup(null);
+  app.run(`(() => { const s = ${saved}; Object.assign(conditions, s.c); modelDaysPerSec = s.r; modelYears = s.y; obstacles.length = 0; })()`);
+  app.buildSolid();
+  app.resetMorph();
+}
+
 // ============================================================ PHASE 4: timeline objects
 console.log("\n=== timeline (model years) ===");
 
@@ -829,7 +889,11 @@ check(Math.abs(loopAt7 - 7.5) < 0.01, "loop tracks model years", `${loopAt7.toFi
 check(Math.abs(loopAt23 - 3.0) < 0.01, "loop wraps at the loop length", `${loopAt23.toFixed(1)}`);
 
 // --- Gate E: an object clipped to a later year does nothing until that year
+// On a bed without the grains' lumps and hollows: the drift now answers them row by row (it
+// used to be averaged over 13 rows), and this measures the object, not them.
 app.resetMorph();
+const gateEKeep = { depo: Float32Array.from(app.getState().depo), pick: Float32Array.from(app.getState().pick) };
+app.getState().depo.fill(0); app.getState().pick.fill(0);
 app.obstacles.length = 0;
 app.obstacles.push({ type: 'rect', x: 760, y: 400, w: 420, h: 24, rotation: 0,
                      clips: [{ start: 10, dur: 6 }] });   // groyne appears in year 10
@@ -861,6 +925,7 @@ console.log(`year 13: ${activeAfter} active, added ${afterClip.toFixed(4)}`);
 check(activeBefore === 0, "object inactive before its clip", `${activeBefore} active`);
 check(activeAfter === 1, "object active inside its clip", `${activeAfter} active`);
 check(Math.abs(beforeClip) < 0.01, "no bed response before the clip", beforeClip.toFixed(4));
+app.getState().depo.set(gateEKeep.depo); app.getState().pick.set(gateEKeep.pick);
 check(Math.abs(afterClip) > 0.01, "bed responds once the clip opens", afterClip.toFixed(4));
 
 // --- object vocabulary: nourishment adds sand, and is not solid
@@ -999,6 +1064,43 @@ console.log("\n=== xbeach export ===");
   }
 }
 
+// ============================================================ the grains move sand, they do not make it
+// With the particles on, a grain takes its sand from where the waves stir the bed and puts the
+// same down where it settles. Until 2026-11-17 grains appeared from nothing and every one
+// that settled added sand: the default calm beach silted up in about 5 minutes of real time.
+// 100 model days of the calm default, the page's own frame loop, particles running.
+if (!process.env.SCORE) {
+  const r = JSON.parse(app.run(`(() => {
+    const keep = { c: Object.assign({}, conditions), r: modelDaysPerSec, y: modelYears, paused, dt: globalThis.deltaTime,
+                   depo: depoGrid.slice(), pick: pickGrid.slice(), morph: morphGrid.slice(), long: longGrid.slice() };
+    Object.assign(conditions, { Hs: 1.2, Tp: 8, dirDeg: 0, spreadDeg: 0, waterLevel: 0 });
+    obstacles.length = 0; solidMaskDirty = true;
+    modelDaysPerSec = 30; globalThis.deltaTime = 16.7; paused = false;
+    const total = () => { let s = 0; for (let k = 0; k < depoGrid.length; k++) s += depoGrid[k] + pickGrid[k] + morphGrid[k] + longGrid[k];
+      for (const q of particles) s += q.load || 0; return s; };
+    const shore = () => { let s = 0, n = 0; for (let j = 5; j <= NY - 5; j++) { const x = shorelineXPx(Math.round(j * cellH / DEPO_CELL), false); if (x != null) { s += x; n++; } } return n ? s / n : NaN; };
+    const a = total(), s0 = shore();
+    let frames = 0; const y0 = modelYears;
+    while ((modelYears - y0) * 365 < 100) { draw(); frames++; }
+    const b = total(), s1 = shore();
+    const toM3 = M_PER_BED_UNIT * (DEPO_CELL * REACH_CROSSSHORE / width) * (DEPO_CELL * REACH_ALONGSHORE / height) / REACH_ALONGSHORE;
+    let moved = 0; for (let k = 0; k < pickGrid.length; k++) moved += Math.max(0, -(pickGrid[k] - keep.pick[k]));
+    // grain sand left on cells that are dry now (above the water): there should be none
+    let dry = 0;
+    for (let gy = 0; gy < GH; gy++) for (let gx = 0; gx < GW; gx++) {
+      const k = gy * GW + gx, x = (gx + 0.5) * DEPO_CELL, y = (gy + 0.5) * DEPO_CELL;
+      if (bedMeters(x, y) > conditions.waterLevel + 0.05) dry = Math.max(dry, (depoGrid[k] - keep.depo[k]) * M_PER_BED_UNIT);
+    }
+    const out = { frames, drift: (b - a) * toM3, moved: moved * toM3, shoreM: (s1 - s0) * REACH_CROSSSHORE / width, dry };
+    Object.assign(conditions, keep.c); modelDaysPerSec = keep.r; modelYears = keep.y; paused = keep.paused; globalThis.deltaTime = keep.dt;
+    depoGrid.set(keep.depo); pickGrid.set(keep.pick); morphGrid.set(keep.morph); longGrid.set(keep.long);
+    return JSON.stringify(out); })()`));
+  console.log(`grains, 100 calm days (${r.frames} frames): sand made ${r.drift.toFixed(4)} m3 per metre of shore, picked up ${r.moved.toFixed(2)}, waterline moved ${r.shoreM.toFixed(2)} m`);
+  check(Math.abs(r.drift) < 0.01 && r.moved > 0.1, "the grains move sand and make none", `${r.drift.toFixed(4)} m3/m made while moving ${r.moved.toFixed(2)} m3/m`);
+  check(Math.abs(r.shoreM) < 2, "the calm beach keeps its waterline with the grains running", `${r.shoreM.toFixed(2)} m in 100 days`);
+  check(r.dry < 0.02, "grains settle in the water, not on the dry beach", `tallest new deposit on a dry cell ${r.dry.toFixed(3)} m`);
+}
+
 // ============================================================ the simulation actually runs
 {
   app.setPaused(false);
@@ -1036,8 +1138,8 @@ if (process.env.PRECISION_DUMP) {
   // is always undefined. Until 2026-11-14 these two lines tested exactly that and silently
   // did nothing, and the probes ran on a bed with lumps of particle deposit up to 0.5 m high.
   { const s0 = app.getState();
-    if (!s0.depo || !s0.P) { console.error("FAIL: cannot reach the deposit grid or the particles to clear them"); process.exit(1); }
-    s0.depo.fill(0); s0.P.length = 0; }
+    if (!s0.depo || !s0.P || !s0.pick) { console.error("FAIL: cannot reach the deposit grid, the grains' pickup layer or the particles to clear them"); process.exit(1); }
+    s0.depo.fill(0); s0.pick.fill(0); s0.P.length = 0; }
   for (let i = 0; i < 4; i++) app.morphStep(86400 * 5);   // give the bed something to draw
   app.rUpdateBedBuffer();
   {
@@ -1079,6 +1181,11 @@ if (!process.env.SCORE) {
   if (!depoNow) { console.error("FAIL: cannot reach the deposit grid"); process.exit(1); }
   const depoKeep = Float32Array.from(depoNow);
   depoNow.fill(0);
+  // and the hollows the grains left where they picked their sand up
+  const pickNow = app.getState().pick;
+  if (!pickNow) { console.error("FAIL: cannot reach the grains' pickup layer"); process.exit(1); }
+  const pickKeep = Float32Array.from(pickNow);
+  pickNow.fill(0);
   const stormDays = runProfile(STORM_COND, 10, true);
   const g = app.getState().morph, gw = D.gw, gh = D.gh;
   const cellM = (D.cross / width) * 4;
@@ -1217,6 +1324,7 @@ if (!process.env.SCORE) {
   app.morphStep(1e-6);                       // puts the storm intensity back to these conditions
   app.getState().morph.set(morphKeep);
   depoNow.set(depoKeep);
+  pickNow.set(pickKeep);
 }
 
 if (process.env.SCORE) {
@@ -1228,8 +1336,8 @@ if (process.env.SCORE) {
   // is always undefined. Until 2026-11-14 these two lines tested exactly that and silently
   // did nothing, and the probes ran on a bed with lumps of particle deposit up to 0.5 m high.
   { const s0 = app.getState();
-    if (!s0.depo || !s0.P) { console.error("FAIL: cannot reach the deposit grid or the particles to clear them"); process.exit(1); }
-    s0.depo.fill(0); s0.P.length = 0; }
+    if (!s0.depo || !s0.P || !s0.pick) { console.error("FAIL: cannot reach the deposit grid, the grains' pickup layer or the particles to clear them"); process.exit(1); }
+    s0.depo.fill(0); s0.pick.fill(0); s0.P.length = 0; }
 
   // --- calm drift: an equilibrium-seeded bed must not move at all under calm water
   {
@@ -1682,8 +1790,8 @@ console.log("");
   Object.assign(app.cond, { Hs: 1.20, Tp: 8.0, dirDeg: 0, spreadDeg: 0, waterLevel: 0 });
   app.resetMorph(); app.waveFieldStep();
   const r = JSON.parse(app.run(`(() => {
-    const keepSolid = solid.slice(), keepDepo = depoGrid.slice();
-    depoGrid.fill(0);
+    const keepSolid = solid.slice(), keepDepo = depoGrid.slice(), keepPick = pickGrid.slice();
+    depoGrid.fill(0); pickGrid.fill(0);
     // A wet cell in the surf zone halfway along, found from the live bed.
     const gy = Math.floor(GH / 2), gyA = gy - 6, gyB = gy + 6;
     let gx = -1;
@@ -1700,13 +1808,13 @@ console.log("");
       return { nbA: at(gyA + 1, gx), nbB: at(gyB - 1, gx), peakA: at(gyA, gx), tot0, tot1 };
     };
     const open = run(false), walled = run(true);
-    resetMorphology(); solid.set(keepSolid); depoGrid.set(keepDepo);
+    resetMorphology(); solid.set(keepSolid); depoGrid.set(keepDepo); pickGrid.set(keepPick);
     // Deposit size: the same grain at the default rate and at four times the model time.
     const keep = lastDtModel;
     lastDtModel = DEPO_DT_REF; const a1 = model.rules.depositAmount();
     lastDtModel = 4 * DEPO_DT_REF; const a4 = model.rules.depositAmount();
     lastDtModel = keep;
-    return JSON.stringify({ gx, open, walled, a1, a4, ref: DEPO_AMOUNT });
+    return JSON.stringify({ gx, open, walled, a1, a4, ref: GRAIN_LOAD * DEPO_AMOUNT });
   })()`));
   const o = r.open, w = r.walled;
   const spreads = o.nbA > 0.01 && o.nbB > 0.01 && o.peakA < 20;
@@ -1880,14 +1988,25 @@ if (process.env.XB_CASE && process.env.XB_OUT) {
   const fs = require('fs');
   const c = Object.assign({}, STORM_COND, JSON.parse(process.env.XB_CASE));
   Object.assign(app.cond, c);
-  app.obstacles.length = 0;
+  // the live array: by this point the page has replaced the one app.obstacles holds
+  app.run("obstacles").length = 0;
+  // XB_GROYNE='{"tipM":330,"yM":200,"wM":8}': a groyne from the land edge out to tipM metres
+  // from the offshore edge, wM wide, centred yM along the shore. XB_HOURS sets the run length.
+  if (process.env.XB_GROYNE) {
+    const g = JSON.parse(process.env.XB_GROYNE), W = app.run("width"), H = app.run("height");
+    const tipPx = g.tipM * W / 600, yPx = g.yM * H / 400, hPx = (g.wM || 8) * H / 400;
+    app.run("obstacles").push({ type: 'rect', kind: 'structure', x: (tipPx + W) / 2, y: yPx, w: W - tipPx, h: hPx,
+                         rotation: 0, clips: [{ start: 0, dur: 1e6 }] });
+  }
   app.buildSolid();
   app.resetMorph();
-  const sx = app.buildXBeach({ hours: 24, morfac: 10 });
+  const sx = app.buildXBeach({ hours: +(process.env.XB_HOURS || 24), morfac: 10 });
   fs.mkdirSync(process.env.XB_OUT, { recursive: true });
   fs.writeFileSync(process.env.XB_OUT + '/params.txt', sx.params);
   fs.writeFileSync(process.env.XB_OUT + '/bed.dep', sx.bed);
   fs.writeFileSync(process.env.XB_OUT + '/jonswap.txt', sx.jonswap);
+  if (sx.neLayer) fs.writeFileSync(process.env.XB_OUT + '/ne_layer.dep', sx.neLayer);
+  console.log(`structure cells in the case: ${sx.nStruct}`);
   fs.writeFileSync(process.env.XB_OUT + '/conditions.json', JSON.stringify(
     { Hs: c.Hs, Tp: c.Tp, dirDeg: c.dirDeg, spreadDeg: c.spreadDeg, waterLevel: c.waterLevel, d50: c.d50 }));
   console.log(`wrote XBeach case -> ${process.env.XB_OUT}`);

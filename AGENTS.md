@@ -93,32 +93,53 @@ The fluvial Stam solver is **gone**. In its place, one analytic pass per frame:
 - `computeRunup()` — Stockdon et al. (2006) eq. 18, `R2 = 1.1(η + S)`, plus Iribarren.
 - `morphologyStep()` — cross-shore: conservative implicit diffusion of the bed's distance
   from `equilibriumZ()`, then slumping. See "Cross-shore morphology" below.
-- `computeLongshore()` / `applyLongshore()` — CERC, conservative flux divergence.
+- `computeLongshore()` / `applyLongshore()` — one-line shoreline model (2026-11-17). Per row:
+  breaking height and angle, and `passShare`, the share of the drift a structure lets past
+  (the drift spread sin-shaped across the surf zone, blocked in the cells a structure covers).
+  `longshoreBase()` puts the waves' drift on the faces between rows (`qFace`) with the smaller
+  pass share of the two rows; `longshoreShift()` is each row's shoreline shift from the
+  longshore layer's volume over the active height; `longshoreQ()` subtracts
+  `2 A cos(2a) phi`, the shoreline angle across the face, except across a structure (a groyne
+  divides the shore). `applyLongshore()` spreads the divergence over the active profile
+  (closure depth to berm top) and substeps so `eps dt / dy^2 <= 0.25`. Three things that were
+  wrong before and are each worth knowing: a 13-row smoothing let 12/13 of the drift through
+  any one-row groyne; taking the angle over rows j-1 and j+1 left an undamped zigzag that flipped
+  the drift's sign; and the gradient was divided by bed rows instead of flow rows (2.2x).
 - `applyNourishment()` — sand placed by `kind: 'nourish'` objects.
 
 **Not modelled:** diffraction and sheltering (a structure stops waves only in its own cells; the shoreward
 march carries the wave height past it, so there is no shadow behind it, measured 2026-11-15), infragravity, erosion of the
-bed below the waterline by storm waves, and shoreline feedback into the breaking angle. Sea-level rise is basic: the target follows the water level.
+bed below the waterline by storm waves. Sea-level rise is basic: the target follows the water level.
 
 ## Bed model — three layers, and why
 
-`bedZ = userBedZ + depoZ + morphZ + longZ`
+`bedZ = userBedZ + depoZ + morphZ + longZ + pickZ`
 
 - `userBedGrid` / `depoGrid` — owned by the interface; the drawn bed and particle deposit.
   The interface computes `userBedZ + depoZ` and hands it to the model's `bedTotal`, which
   adds the two layers below in the same order as before. The grains' deposits are part of
   the bed the waves see and the morphology moves, on purpose (Brad, 2026-11-16: the bed
-  should come from the deposits). A grain's deposit is sized by model time
-  (`rules.depositAmount()`: `DEPO_AMOUNT` per `DEPO_DT_REF`, the default rate at 60 frames),
-  so the bed grows at the same rate per model day at any rate slider or frame rate.
+  should come from the deposits). Since 2026-11-17 the grains conserve sand (Brad chose this
+  over a decay or a cap): `spawnGrain()` starts a grain where the waves stir the bed
+  (`grainStart()`, wave height over breaking height, inside the closure depth) and takes its
+  `load` from `pickGrid`, a signed layer, with addDeposit's 3 x 3 footprint; it settles only in
+  the water (`grainWet()`) and puts the same load down (`rules.depositAmount(p)`); a lost grain
+  (interface hook `particleLost`) gives it back where it started; R clears `pickGrid` with the
+  deposits (`restart()`). The load is `GRAIN_LOAD` (0.03) of `DEPO_AMOUNT` per `DEPO_DT_REF`
+  of model time. At 1 the grains moved ~3.5 m3/m/day and set the beach on their own.
+  Any check that clears `depoGrid` must clear `pickGrid` too, or it measures the hollows.
 - `morphGrid` — cross-shore change. **Conservative** since stage 4: every row keeps its sand
   (a harness check, to 0.05 m2 per metre of shore over a 10-day storm).
-- `longGrid` — longshore transport. **Conservative.** Kept in its own layer so cross-shore
-  change cannot erase the accretion that proves a groyne works.
+- `longGrid` — longshore transport. **Conservative.** Kept in its own layer; the cross-shore
+  target moves with its volume (`shift` in `morphologyStep()`), and the alongshore smoothing
+  leaves it out, so neither undoes the drift. (Before 2026-11-17 both did: next to a groyne
+  morphGrid relaxed toward minus longGrid and the layers ran to their clamps.)
+- `pickGrid` — where the grains took their sand from (negative). See above.
 - `bedZ0 = userBedZ + depoZ` — the bed without morphology; used for the change overlay and to
   find the waterline the Dean target hangs from.
 
-The two morphology layers are summed into the bed but **not coupled**.
+The two morphology layers are coupled through the shoreline only: the profile moves with the
+drift's sand, and the drift reads the shoreline it has made.
 
 ## Cross-shore morphology (stage 4, 2026-11-14)
 
@@ -246,8 +267,8 @@ zero, so the bed does not lurch on load.
 ## Testing
 
 ```
-node dev/headless_harness.js index.html      # the coastal model and the export: 102 checks
-node dev/interface_harness.js index.html     # the shared interface under this model: 64 checks
+node dev/headless_harness.js index.html      # the coastal model and the export: 109 checks
+node dev/interface_harness.js index.html     # the shared interface under this model: 66 checks
 ```
 
 Run both. `headless_harness.js` is this repo's; it loads the page the way a browser does

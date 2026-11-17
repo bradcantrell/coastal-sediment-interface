@@ -726,8 +726,7 @@ function morphologyStep(dtModel) {
   const POR = 0.4;
 
   const D = TRANSPORT_D0 * Math.max(conditions.Hs, 0.1) / TRANSPORT_HREF;
-  const hClose = CLOSURE_BASE_M + CLOSURE_PER_HS * conditions.Hs
-               + CLOSURE_PER_SWELL_S * Math.max(0, conditions.Tp - (SWELL_T0 + SWELL_T_PER_HS * conditions.Hs));
+  const hClose = closureDepthM();
   const r = (D / (1 - POR)) * dtModel / (dx * dx);
   const reach = conditions.waterLevel + WAVE_REACH_PER_HS * conditions.Hs;
   // m2 of cross-section per metre of shore this step; none while storm waves are running
@@ -758,13 +757,22 @@ function morphologyStep(dtModel) {
     const xShore = shoreRefAt(gy);
     if (xShore === null) continue;
     const y = (gy + 0.5) * DEPO_CELL;
+    // The profile moves with the sand the drift has brought or taken: the longshore layer's
+    // volume in this row, spread over the active height (closure depth to berm top), is how
+    // far the shoreline has moved, and the target moves with it. Anchored at the original
+    // shoreline instead, the step took away whatever the drift brought (morphGrid relaxed
+    // toward minus longGrid), and next to a groyne the two layers grew against each other by
+    // about 11 m a year until both hit their clamps (2026-11-17 stress test).
+    let vLong = 0;
+    for (let gx = 0; gx < GW; gx++) vLong += longGrid[gy * GW + gx];
+    const shift = vLong * M_PER_BED_UNIT * dx / (hClose + BERM_TOP_M);
 
     let any = false;
     for (let gx = 0; gx < GW; gx++) {
       const x = (gx + 0.5) * DEPO_CELL;
       const z = bedZ(x, y) * M_PER_BED_UNIT;
       zr[gx] = z;
-      const Y = (xShore - x) * xMPerPx;
+      const Y = (xShore - x) * xMPerPx - shift;
       const du0 = z - equilibriumZ(Y, stormNow, A);
       // Waves cut the bed only as high as they reach: WAVE_REACH_PER_HS x Hs above the live
       // water level. Above that the bed is dry and is lowered only by slumping (below).
@@ -914,7 +922,11 @@ function morphologyStep(dtModel) {
       const fU = (gy > 0      && M[q] && M[q - GW]) ? ry : 0;
       const fD = (gy < GH - 1 && M[q] && M[q + GW]) ? ry : 0;
       if (fU || fD) any = true;
-      cl[gy] = -fU; cp[gy] = -fD; cd[gy] = 1 + fU + fD; cr[gy] = cu[gy] = Z[q];
+      // The drift's own layer is left out: its shape along the shore (a groyne's fillet) is
+      // set by the transport and the shoreline feedback, and smoothing it here undid the
+      // fillet as fast as the drift built it, into morphGrid, so the two layers grew apart
+      // while the bed hardly moved.
+      cl[gy] = -fU; cp[gy] = -fD; cd[gy] = 1 + fU + fD; cr[gy] = cu[gy] = Z[q] - longGrid[q] * M_PER_BED_UNIT;
     }
     if (!any) continue;
     for (let gy = 1; gy < GH; gy++) {
@@ -934,6 +946,13 @@ function morphologyStep(dtModel) {
 
   lastMaxErosion = maxEr;
   lastMaxAccretion = maxAc;
+}
+
+
+/** Depth of closure below the live water level, m (see CLOSURE_BASE_M). */
+function closureDepthM() {
+  return CLOSURE_BASE_M + CLOSURE_PER_HS * conditions.Hs
+       + CLOSURE_PER_SWELL_S * Math.max(0, conditions.Tp - (SWELL_T0 + SWELL_T_PER_HS * conditions.Hs));
 }
 
 
@@ -957,9 +976,9 @@ function resetMorphology() {
 // sin(2a) makes transport zero at shore-normal and peak at 45 degrees, by construction.
 // The bed then follows the divergence: dz/dt = -(1/(1-p)) * (dQ/dy) / W_active.
 //
-// Structures block transport because they occupy the surf zone: buildSolidMask zeroes the
-// wave field inside them, so no cell in that row is breaking, so Q is zero there. The
-// resulting gradient IS the groyne effect — accretion updrift, erosion downdrift.
+// Structures block the share of the drift that flows through the cells they cover (see
+// computeLongshore); the gradient this leaves is the groyne effect, accretion updrift and
+// erosion downdrift, and the shoreline feedback sets how far along the shore it reaches.
 
 const CERC_K = 0.39;         // CERC coefficient for significant wave height
 
@@ -976,6 +995,7 @@ let qLong = new Float32Array(NY + 2);
 let qPeak = 0, qMean = 0;    // m3/s
 
 
+
 /** CERC longshore transport rate, m3/s. alpha is the breaking angle in radians. */
 function cercQ(Hb, alpha) {
   if (Hb <= 0.02 || !isFinite(alpha)) return 0;
@@ -985,84 +1005,188 @@ function cercQ(Hb, alpha) {
 }
 
 
-/** Transport rate per alongshore row, taken at the outermost breaking cell. */
+// Per flow row, from the wave field: breaking height and angle at the outermost breaking cell,
+// and the share of the drift a structure lets past. The drift itself is longshoreQ().
+let HbAt = new Float64Array(NY + 2), alphaAt = new Float64Array(NY + 2);
+let passShare = new Float64Array(NY + 2), hasBreak = new Uint8Array(NY + 2);
+let shoreShift = new Float64Array(NY + 2);     // m, seaward, from the longshore layer
+
+/**
+ * Transport rate per alongshore row.
+ *
+ * Height and angle are taken at the outermost breaking cell. Two things then shape it:
+ *
+ * Structures. The drift is spread across the surf zone, sin-shaped from the breaker line to
+ * the shoreline (a simple stand-in for the measured distributions, which peak inside the surf
+ * zone), and a structure blocks the share that flows through the cells it covers. A short
+ * groyne holds back part of the drift, one reaching the breakers nearly all of it. (It used
+ * to block all or nothing, switching at the outer breaker. 2026-11-17 stress test.)
+ *
+ * The shoreline (longshoreQ). The breaking angle is measured against the local shoreline
+ * (one-line theory): where a fillet turns the shore to face the waves the drift falls, so a
+ * groyne's fillet levels off and downdrift erosion spreads instead of digging in. Without it
+ * the drift ran at the full rate next to a groyne for ever.
+ */
 function computeLongshore() {
   for (let j = 1; j <= NY; j++) {
-    let Hb = 0, alpha = 0, found = false;
+    let iBreak = -1, iShore = -1;
     for (let i = 1; i <= NX; i++) {
       const idx = IX(i, j);
-      if (waveBreaking[idx]) { Hb = waveH[idx]; alpha = waveAngle[idx]; found = true; break; }
+      if (iBreak < 0 && waveBreaking[idx]) { iBreak = i; HbAt[j] = waveH[idx]; alphaAt[j] = waveAngle[idx]; }
+      if (depthAt(i, j) <= 0.05) { iShore = i; break; }
     }
-    qLong[j] = found ? cercQ(Hb, alpha) : 0;
-  }
-
-  // Structure-influence smoothing. A groyne occupies fewer alongshore rows than the grid
-  // can resolve, so differencing it directly deposits the whole fillet into a single row —
-  // a spike, not a beach. Widening the transition to a few rows makes the deposit
-  // resolvable. This is a numerical treatment, not physics: a proper one-line model would
-  // derive the same length from shoreline curvature feeding back into the breaking angle.
-  const HALO = 6;
-  const tmp = new Float32Array(NY + 2);
-  for (let j = 1; j <= NY; j++) {
-    let sum = 0, n = 0;
-    for (let k = -HALO; k <= HALO; k++) {
-      const jj = j + k < 1 ? 1 : (j + k > NY ? NY : j + k);
-      sum += qLong[jj]; n++;
+    hasBreak[j] = iBreak > 0 ? 1 : 0;
+    // No breaking in a row a structure crosses: it covers the whole surf zone.
+    let anySolid = false;
+    if (iBreak < 0) for (let i = 1; i <= NX && !anySolid; i++) anySolid = solid[IX(i, j)] === 1;
+    passShare[j] = anySolid ? 0 : 1;
+    if (iBreak > 0 && iShore > iBreak) {
+      let all = 0, open = 0;
+      const n = iShore - iBreak;
+      for (let i = iBreak; i < iShore; i++) {
+        const w = Math.sin(Math.PI * (i - iBreak + 0.5) / n);
+        all += w;
+        if (!solid[IX(i, j)]) open += w;
+      }
+      passShare[j] = all > 0 ? open / all : 1;
     }
-    tmp[j] = sum / n;
   }
-  for (let j = 1; j <= NY; j++) qLong[j] = tmp[j];
+  longshoreBase();
+  longshoreShift();
+  longshoreQ(qLong);
 
   let sum = 0, n = 0, peak = 0;
   for (let j = 1; j <= NY; j++) {
     sum += qLong[j]; n++;
     if (Math.abs(qLong[j]) > peak) peak = Math.abs(qLong[j]);
   }
-  qLong[0] = qLong[1];
-  qLong[NY + 1] = qLong[NY];
   qPeak = peak;
   qMean = n ? sum / n : 0;
+}
+
+// How far each row's shoreline has moved seaward because of the drift: the longshore layer's
+// volume per metre of shore over the active height (closure depth to berm top). Read from the
+// layer itself, not the waterline, which steps a whole cell at a time.
+function longshoreShift() {
+  shoreShift.fill(0);
+  if (!longGrid) return;
+  const dxm = DEPO_CELL * (REACH_CROSSSHORE / Math.max(width, 1));
+  const Dact = closureDepthM() + BERM_TOP_M;
+  const cnt = new Float64Array(NY + 2);
+  for (let gy = 0; gy < GH; gy++) {
+    const j = Math.max(1, Math.min(NY, Math.round((gy + 0.5) * DEPO_CELL / cellH)));
+    let v = 0;
+    for (let gx = 0; gx < GW; gx++) v += longGrid[gy * GW + gx];
+    shoreShift[j] += v * M_PER_BED_UNIT * dxm / Dact; cnt[j]++;
+  }
+  for (let j = 1; j <= NY; j++) shoreShift[j] = cnt[j] ? shoreShift[j] / cnt[j] : 0;
+  shoreShift[0] = shoreShift[1]; shoreShift[NY + 1] = shoreShift[NY];
+}
+
+// The drift on the faces between flow rows (qFace[j] is between rows j and j + 1, 0 and NY
+// are the open ends), and its mean per row in qLong. One-line form: the drift through a face
+// is the drift the waves alone would carry, minus 2 A cos(2 alpha) times the angle of the
+// shoreline across that face, from the two rows on either side of it. (Taken from rows j - 1
+// and j + 1 instead, on rows, it left a row-to-row zigzag undamped, which grew until the drift
+// changed sign.)
+let qFace = new Float64Array(NY + 1);
+const qBase = new Float64Array(NY + 1), qAmpF = new Float64Array(NY + 1), cos2F = new Float64Array(NY + 1), passF = new Float64Array(NY + 1);
+function longshoreBase() {
+  // Per row what the waves alone would carry, NaN where nothing breaks.
+  const raw = new Float64Array(NY + 2), amp = new Float64Array(NY + 2), c2 = new Float64Array(NY + 2);
+  for (let j = 1; j <= NY; j++) {
+    if (!hasBreak[j]) { raw[j] = amp[j] = c2[j] = NaN; continue; }
+    raw[j] = cercQ(HbAt[j], alphaAt[j]);
+    amp[j] = cercQ(HbAt[j], Math.PI / 4);
+    c2[j] = Math.cos(2 * alphaAt[j]);
+  }
+  raw[0] = raw[1]; raw[NY + 1] = raw[NY]; amp[0] = amp[1]; amp[NY + 1] = amp[NY]; c2[0] = c2[1]; c2[NY + 1] = c2[NY];
+  const mean = (a, b) => Number.isFinite(a) ? (Number.isFinite(b) ? 0.5 * (a + b) : a) : (Number.isFinite(b) ? b : 0);
+  // On each face: the mean of the rows either side that have breaking waves, and the share a
+  // structure lets through, the smaller of the two rows'. A groyne's own rows pass only what
+  // goes round its tip. (A smoothing over 13 rows used to stand in for all this, which let
+  // about 12/13 of the drift through any groyne one row wide.)
+  for (let f = 0; f <= NY; f++) {
+    const pass = Math.min(f >= 1 ? passShare[f] : 1, f < NY ? passShare[f + 1] : 1);
+    passF[f] = pass;
+    qBase[f] = mean(raw[f], raw[f + 1]) * pass;
+    qAmpF[f] = mean(amp[f], amp[f + 1]) * pass;
+    cos2F[f] = mean(c2[f], c2[f + 1]);
+  }
+}
+function longshoreQ(out) {
+  const dyFlow = cellH * (REACH_ALONGSHORE / Math.max(height, 1));
+  qFace[0] = qBase[0]; qFace[NY] = qBase[NY];                    // open ends: what the waves carry
+  for (let f = 1; f < NY; f++) {
+    // A shoreline further seaward at larger y faces waves arriving at a positive angle more
+    // squarely: the angle to the local shore is smaller, and so is the drift.
+    // Not across a structure: a groyne divides the shore into two, and what crosses its line
+    // is what goes round its tip. (Read across it, the step from the fillet to the groyne's
+    // own row cancelled most of the blocking within one step.)
+    if (passF[f] < 1) { qFace[f] = qBase[f]; continue; }
+    const phi = Math.atan((shoreShift[f + 1] - shoreShift[f]) / dyFlow);
+    qFace[f] = qBase[f] - 2 * qAmpF[f] * cos2F[f] * phi;
+  }
+  for (let j = 1; j <= NY; j++) out[j] = 0.5 * (qFace[j - 1] + qFace[j]);
+  out[0] = out[1];
+  out[NY + 1] = out[NY];
 }
 
 
 /**
  * Apply the transport divergence over a model-time step.
- * Volumetric: whatever leaves one cell arrives in the next, so the alongshore layer
- * conserves sediment. The cross-shore relaxation does not, and they are kept apart.
+ * Volumetric: whatever leaves one row arrives in the next, so the alongshore layer conserves
+ * sediment. The step is split so the shoreline feedback stays stable: it acts as diffusion
+ * along the shore, eps = 2 Q / ((1 - p) D), and an explicit step needs eps dt / dy^2 below a
+ * half. At the default rate one step is half a model day, about three times that limit.
  */
 function applyLongshore(dtModel) {
   if (!longGrid || !morphEnabled || dtModel <= 0) return;
 
   const xMPerPx = REACH_CROSSSHORE / Math.max(width, 1);
-  const dyp = DEPO_CELL * (REACH_ALONGSHORE / Math.max(height, 1));   // metres per morph row
+  const dyFlow = cellH * (REACH_ALONGSHORE / Math.max(height, 1));     // metres per flow row
+  const dxm = DEPO_CELL * xMPerPx;
 
+  // The active profile of each row: from the depth of closure up to the berm top. The drift
+  // adds or takes sand over all of it, so the profile moves as a whole and the shoreline with
+  // it. (It used to go only between the breaker line and the waterline, which hardly moved
+  // the shoreline: downdrift of a groyne the bed was dug down metres while the shore stood.)
+  const hClose = closureDepthM(), top = conditions.waterLevel + BERM_TOP_M;
+  const band0 = new Int32Array(GH).fill(-1), band1 = new Int32Array(GH).fill(-1);
   for (let gy = 0; gy < GH; gy++) {
     const y = (gy + 0.5) * DEPO_CELL;
-    const j = Math.max(1, Math.min(NY, Math.round(y / cellH)));
-
-    // active zone: break point to shoreline, for this row
-    let iBreak = -1, iShore = -1;
-    for (let i = 1; i <= NX; i++) {
-      const idx = IX(i, j);
-      if (iBreak < 0 && waveBreaking[idx]) iBreak = i;
-      if (iShore < 0 && depthAt(i, j) <= 0.05) { iShore = i; break; }
+    for (let gx = 0; gx < GW; gx++) {
+      const z = bedMeters((gx + 0.5) * DEPO_CELL, y);
+      if (band0[gy] < 0 && conditions.waterLevel - z <= hClose) band0[gy] = gx;
+      if (band0[gy] >= 0 && z >= top) { band1[gy] = gx - 1; break; }
     }
-    if (iBreak < 1 || iShore <= iBreak) continue;
+  }
 
-    const Wact = Math.max((iShore - iBreak) * cellW * xMPerPx, 10);   // metres
-    const dQdy = (qLong[j + 1] - qLong[j - 1]) / (2 * dyp);           // m2/s
-    const dzdt = -(dQdy / ((1 - POROSITY_LS) * Wact)) * longshoreGain; // m/s
-    if (!isFinite(dzdt) || dzdt === 0) continue;
-    const dzUnits = dzdt * dtModel / M_PER_BED_UNIT;
+  let qAmp = 0;
+  for (let f = 0; f <= NY; f++) qAmp = Math.max(qAmp, Math.abs(qAmpF[f]));
+  const eps = 2 * qAmp * longshoreGain / ((1 - POROSITY_LS) * (hClose + BERM_TOP_M));
+  const nSub = Math.max(1, Math.min(64, Math.ceil(eps * dtModel / (dyFlow * dyFlow) / 0.25)));
+  const dt = dtModel / nSub;
 
-    const gx0 = Math.max(0, Math.floor((iBreak * cellW) / DEPO_CELL));
-    const gx1 = Math.min(GW - 1, Math.ceil((iShore * cellW) / DEPO_CELL));
-
-    for (let gx = gx0; gx <= gx1; gx++) {
-      const idx = gy * GW + gx;
-      longGrid[idx] += dzUnits;
-      if (longGrid[idx] >  300) longGrid[idx] =  300;
-      if (longGrid[idx] < -300) longGrid[idx] = -300;
+  for (let sub = 0; sub < nSub; sub++) {
+    if (sub > 0) { longshoreShift(); longshoreQ(qLong); }
+    for (let gy = 0; gy < GH; gy++) {
+      const gx0 = band0[gy], gx1 = band1[gy];
+      if (gx0 < 0 || gx1 < gx0) continue;
+      const j = Math.max(1, Math.min(NY, Math.round((gy + 0.5) * DEPO_CELL / cellH)));
+      const Wact = Math.max((gx1 - gx0 + 1) * dxm, 10);                 // metres
+      // The difference across the row's two faces, one flow row apart. (It used to be taken
+      // over two flow rows and divided by two bed rows, which overstated it by about 2.2.)
+      const dQdy = (qFace[j] - qFace[j - 1]) / dyFlow;                  // m2/s
+      const dzdt = -(dQdy / ((1 - POROSITY_LS) * Wact)) * longshoreGain; // m/s
+      if (!isFinite(dzdt) || dzdt === 0) continue;
+      const dzUnits = dzdt * dt / M_PER_BED_UNIT;
+      for (let gx = gx0; gx <= gx1; gx++) {
+        const idx = gy * GW + gx;
+        longGrid[idx] += dzUnits;
+        if (longGrid[idx] >  300) longGrid[idx] =  300;
+        if (longGrid[idx] < -300) longGrid[idx] = -300;
+      }
     }
   }
 }
@@ -1118,11 +1242,78 @@ function applyNourishment(dtModel) {
   }
 }
 
-function spawnParticle() {
-  // Suspended sediment fills the water, rather than entering as an inflow stream: seed
-  // across the offshore portion of the reach so the whole surf zone is populated.
-  let x = random(cellW, width * 0.70), y = random(cellH, height - cellH);
-  return { x, y, vx: random(0, 0.15) * cellW, vy: random(-0.3,0.3)*cellH, born: simTime - random(0, MAX_PARTICLE_AGE) };
+// ── The grains' sand ──
+// A grain is sand the waves have stirred off the bed: it takes its load from where it starts
+// (pickGrid, a signed layer in the bed) and puts the same load down where it settles. A grain
+// that leaves the canvas or ages out puts it back where it is. So the grains move sand and
+// never make it. They used to appear out of nothing over the whole water and add sand
+// wherever they settled: the default calm beach silted up in about 5 minutes of real time
+// (2026-11-17 stress test).
+let pickGrid = null;
+function pickZ(x, y) {
+  if (!pickGrid) return 0;
+  let fx = Math.min(Math.max(x / DEPO_CELL - 0.5, 0), GW - 1);
+  let fy = Math.min(Math.max(y / DEPO_CELL - 0.5, 0), GH - 1);
+  let i = Math.min(Math.floor(fx), GW - 2), j = Math.min(Math.floor(fy), GH - 2);
+  let tx = fx - i, ty = fy - j;
+  let a = pickGrid[j * GW + i],       b = pickGrid[j * GW + i + 1];
+  let c = pickGrid[(j + 1) * GW + i], d = pickGrid[(j + 1) * GW + i + 1];
+  return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+}
+// The same 3 x 3 footprint the interface's addDeposit() uses (weights sum to 1), unclamped.
+function stampPick(x, y, amt) {
+  if (!pickGrid) return;
+  const i = Math.floor(x / DEPO_CELL - 0.5), j = Math.floor(y / DEPO_CELL - 0.5);
+  for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+    const ii = Math.min(GW - 1, Math.max(0, i + di)), jj = Math.min(GH - 1, Math.max(0, j + dj));
+    pickGrid[jj * GW + ii] += amt * ((di === 0 && dj === 0) ? 0.5 : 0.0625);
+  }
+}
+// A grain carries 3% of the deposit a grain used to add. The grains now move sand rather than
+// make it, and at the old amount they moved about 3.5 m3 per metre of shore a day: far more
+// than the profile step, so they set the beach shape on their own (the calm beach lost its
+// waterline 50 m landward in 600 days). At 3% the calm beach holds its waterline over 600 days
+// and no deposit passes about a metre. The size is a choice, not a fit.
+let GRAIN_LOAD = 0.03;
+function grainLoad() { return GRAIN_LOAD * (lastDtModel > 0 ? DEPO_AMOUNT * lastDtModel / DEPO_DT_REF : DEPO_AMOUNT); }
+
+// Where a new grain starts: a point in the water, inside the depth of closure, taken with a
+// chance that rises with how hard the waves stir the bed there (wave height over the height
+// it breaks at). Breaking water lifts the most sand; deep water and the dry beach none.
+function grainStart() {
+  const hClose = closureDepthM();
+  let x = 0, y = 0;
+  for (let t = 0; t < 40; t++) {
+    x = random(cellW, width - cellW); y = random(cellH, height - cellH);
+    const i = Math.max(1, Math.min(NX, Math.round(x / cellW))), j = Math.max(1, Math.min(NY, Math.round(y / cellH)));
+    const idx = IX(i, j), h = depthAt(i, j);
+    if (h <= 0.05 || h > hClose || solid[idx]) continue;
+    const stir = Math.min(1, waveH[idx] / Math.max(breakerGamma * h, 1e-3));
+    if (random() < stir) return { x, y };
+  }
+  return null;
+}
+
+function spawnGrain(born) {
+  let at = grainStart();
+  if (!at) at = { x: random(cellW, width * 0.70), y: random(cellH, height - cellH) };   // no waves: the old spread
+  const load = grainLoad();
+  stampPick(at.x, at.y, -load);
+  return { x: at.x, y: at.y, ox: at.x, oy: at.y, vx: random(0, 0.15) * cellW, vy: random(-0.3, 0.3) * cellH, born, load };
+}
+function spawnParticle() { return spawnGrain(simTime - random(0, MAX_PARTICLE_AGE)); }
+function respawnParticle() { return spawnGrain(simTime); }
+// A grain that ages out or leaves the canvas has not settled anywhere: its sand goes back
+// where it came from (a grain lifted from a deposit, back to that deposit's place).
+function grainLost(p) {
+  if (!(p.load > 0)) return;
+  const x = p.ox != null ? p.ox : p.x, y = p.oy != null ? p.oy : p.y;
+  stampPick(Math.min(width - 1, Math.max(0, x)), Math.min(height - 1, Math.max(0, y)), p.load);
+}
+function grainWet(p) {
+  if (!p) return true;
+  const i = Math.max(1, Math.min(NX, Math.round(p.x / cellW))), j = Math.max(1, Math.min(NY, Math.round(p.y / cellH)));
+  return depthAt(i, j) > 0.05;
 }
 
 
@@ -1413,10 +1604,11 @@ registerModel({
   bed: { zMin: BED_Z_MIN, zMax: BED_Z_MAX, datumLabel: 'still water' },
   defaultBedZ: defaultCoastalBedZ,
   // z is the drawn bed plus deposit; the model adds what the waves have moved.
-  bedTotal(z, x, y) { return z + morphZ(x, y) + longZ(x, y); },
+  bedTotal(z, x, y) { return z + morphZ(x, y) + longZ(x, y) + pickZ(x, y); },
   bedGridsReady() {
     morphGrid = new Float32Array(GW * GH);
     longGrid = new Float32Array(GW * GH);
+    pickGrid = new Float32Array(GW * GH);
     rebuildUserBedGrid();          // seed the coastal profile into the cached bed grid
   },
   renderBed: coastalRenderBed,
@@ -1616,7 +1808,8 @@ registerModel({
     get erosionProb() { return erosionProb; },
     minTravelX: MIN_TRAVEL_X, minAge: MIN_PARTICLE_AGE, maxAge: MAX_PARTICLE_AGE,
     bedSettleOnBed: 1,
-    depositAmount() { return lastDtModel > 0 ? DEPO_AMOUNT * lastDtModel / DEPO_DT_REF : DEPO_AMOUNT; },
+    // A grain puts down the sand it took up (see spawnGrain).
+    depositAmount(p) { return p && p.load != null ? p.load : grainLoad(); },
     // Sediment slides on the dry beach only, and gently: under water the waves move it.
     slope(p, gradX, gradY, bedHere) {
       if (bedHere > 0) {
@@ -1624,8 +1817,14 @@ registerModel({
         p.vx += gradX * cellW * 0.05;
       }
     },
-    bedSettleChance(bedHere, settleProb) { return settleProb * (1.0 + (bedHere / 160) * 4.0); },   // 1x..5x settleProb
-    settleBoost(bedHere) { return bedHere > 0 ? 1.0 + (bedHere/160)*4.0 : 1.0; },
+    // Grains settle in the water only. They used to settle five times as readily on high
+    // ground, and stranded grains stopped dead on the dry beach (no flow there) and settled
+    // into a ridge along the waterline that the waves could not reach to cut back.
+    bedSettleChance(bedHere, settleProb, p) { return grainWet(p) ? settleProb : 0; },
+    settleBoost(bedHere, p) { return grainWet(p) ? 1.0 : 0; },
   },
-  spawnParticle, respawnParticle: spawnParticle,
+  spawnParticle, respawnParticle,
+  particleLost: grainLost,
+  // R clears the deposits; the sand the grains took up goes with them.
+  restart() { if (pickGrid) pickGrid.fill(0); },
 });

@@ -44,34 +44,56 @@ See `PLAN.md` for the full design and the phase gates.
 | Dune | Waves cut up to 0.15·Hs above the water; behind that the bed slumps at 0.3 (wet) or 1.0 (dry) |
 | Dune recovery | Wind moves sand from the dry beach to a cut dune at a set rate (default 10 m³/m/yr), in calm only |
 | Alongshore spreading | The same diffusion run along the shore over the wet bed, stopped by structures |
-| Longshore | CERC, Q = K/(16(s−1))·Hb^2.5/√γ·sin(2αb) |
-| Bed change | dz/dt = −(1/(1−p))·(dQ/dy)/W_active |
+| Longshore | CERC, Q = K/(16(s−1))·Hb^2.5/√γ·sin(2αb), with αb measured against the local shoreline (one-line feedback) |
+| Bed change | dz/dt = −(1/(1−p))·(dQ/dy)/W_active, over the active profile from the depth of closure to the berm top |
 
 **Not modelled:** diffraction and sheltering (a structure stops waves only in its own cells; the shoreward
 march carries the wave height past it, so there is no shadow behind it, measured 2026-11-15), infragravity, erosion of
-the bed below the waterline by storm waves, and shoreline feedback into the breaking angle, so a groyne fillet
-does not feed back to reduce transport. The cross-shore and longshore terms both conserve
-sand and are kept in separate bed layers; they are summed into the bed but not yet coupled.
+and erosion of the bed below the waterline by storm waves. The cross-shore and longshore terms
+both conserve sand and are kept in separate bed layers. They are coupled through the shoreline:
+the profile the cross-shore step relaxes toward moves with the sand the drift has brought or
+taken.
 Sea-level rise is handled only in a basic way: the target profile follows the water level,
 so a higher level slowly moves the profile up and inland.
 
-The grains that settle become part of the bed. The waves see what the grains leave
-behind, and the bed model moves those deposits like any other sand. Each grain adds to the
-bed in proportion to the model time since the last frame, so the bed builds at the same rate
-per model day no matter the model rate or frame rate. Spreading the bed a little along the
-shore keeps the deposits from growing into stripes across the beach.
+The grains move sand and make none. A grain starts where the waves stir the bed (more often
+the closer the waves are to breaking, never deeper than the depth of closure), takes its sand
+from there, and puts the same sand down where it settles, in the water only. A grain that ages
+out puts its sand back where it started. The bed model moves the deposits like any other sand.
+A grain carries sand in proportion to the model time since the last frame, so the bed changes
+at the same rate per model day whatever the model rate or frame rate. Each grain carries 3% of
+what it used to: at the old amount the grains moved about 3.5 m³ per metre of shore a day,
+far more than the profile model, and set the shape of the beach on their own. Until 2026-11-17
+the grains added sand wherever they settled, and the calm default beach silted up in about
+five minutes of real time; the XBeach numbers below were always measured with the deposits
+cleared.
 
 ## Longshore transport
 
-Transport is computed per alongshore row at the break point and the bed follows its
-divergence. Structures block it because they occupy the surf zone: `buildSolidMask` zeroes
-the wave field inside them, so no cell in that row breaks, so Q is zero there. The resulting
-gradient **is** the groyne effect — sand piles up on the updrift side and starves the
-downdrift side.
+Transport is computed between alongshore rows from the breaking waves and the shoreline, and
+the whole active profile, from the depth of closure up to the berm top, follows its
+divergence. This is a one-line shoreline model:
 
-The transport field is smoothed over a six-row window. A groyne occupies fewer alongshore
-rows than the grid resolves, so differencing it directly deposits the whole fillet into a
-single row — a spike, not a beach. This is a numerical treatment, not physics.
+- **The shoreline turns the drift.** The breaking angle is measured against the local
+  shoreline, so a fillet that turns the shore to face the waves slows the drift into it. The
+  shoreline position comes from the sand the drift has moved. The feedback acts as diffusion
+  along the shore, and the step is split so it stays stable.
+- **A structure blocks what flows through it.** The drift is spread across the surf zone,
+  sin-shaped from the breaker line to the shoreline, and a structure stops the share in the
+  cells it covers. A short groyne holds back part of the drift, one past the breakers nearly
+  all of it, and once its fillet has moved the shore seaward of its tip, sand passes again.
+
+Before 2026-11-17 a groyne blocked all or nothing, switching where its tip passed the outer
+breaker, and next to one the cross-shore and longshore layers grew against each other by about
+11 m a year until both hit their limits.
+
+Checked against XBeach (`dev/xbeach-groyne-reference.json`, reported, not scored; 20 days, Hs
+2 m, waves 15° off normal, a groyne past the breakers and one halfway across the surf zone).
+Within 50 m updrift of the groyne the model's fillet is 81% of XBeach's for the long groyne and
+115% for the short one. Two things differ. XBeach builds sand in the sheltered water just
+downdrift of the groyne and erodes further on, where the model erodes right behind it, because
+its structures cast no wave shadow. And in XBeach the fillet runs the whole 200 m to the side of
+its domain, where its boundaries also act, while the model's fades over about 100 m.
 
 CERC is accurate to perhaps ±50% in absolute terms. The gates are therefore about behaviour
 — the zero at shore-normal, the peak at 45°, which side of a groyne gains sand — not about
@@ -270,7 +292,7 @@ equal morphological time (10 d): correlation 0.986 over 55 cells
 amplitude at equal time: 1.614 vs xbeach 1.792 m (ratio 0.90)
 ```
 
-102 checks. 101 pass on a slower machine; the one failure is a frame-time limit recorded on a faster
+109 checks. 108 pass on a slower machine; the one failure is a frame-time limit recorded on a faster
 machine.
 
 Note: extracting the script and running `node --check` alone is **not** sufficient — it

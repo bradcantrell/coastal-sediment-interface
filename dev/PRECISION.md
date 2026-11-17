@@ -869,6 +869,48 @@ near-zero drift for straight-in waves with spread, drift sign follows direction 
 and spread changes drift by no more than it should. The first and third fail on the previous
 model.
 
+## Groynes, one-line feedback, and grains that conserve sand: 80.4 (unchanged)
+
+From the 2026-11-17 stress test, with Brad's choices (grains conserve sand; groynes as in
+one-line theory; check against XBeach).
+
+- Longshore: a one-line shoreline model (see AGENTS.md, computeLongshore). The breaking angle
+  is measured against the local shoreline, the drift is applied over the active profile, a
+  structure blocks the share of the drift in the cells it covers, the step is substepped for
+  stability. The cross-shore target moves with the drift's sand and the alongshore smoothing
+  leaves the drift's layer alone. Next to a groyne the layers no longer run to their clamps
+  (2 years: drift layer 2.6 m after one year, 4.8 m after two; it used to reach 15 m in 1.4).
+- Grains: take their sand from where the waves stir the bed and put it down where they settle,
+  in the water only; 3% of the old load. 100 calm days: sand made 0.0000 m3/m, waterline
+  0.14 m.
+- The score's beaches have no structures and the probes clear the deposits and the grains'
+  pickup layer, so the output is the same to every printed digit.
+
+XBeach groyne runs, reported, not scored (`dev/xbeach-groyne-reference.json`; 20 days, Hs 2 m,
+Tp 9 s, waves 15 deg off normal, spread 10, surge 0.3 m; surf zone 359 to 448 m; groyne tips at
+320 m, past the breakers, and 403 m, halfway; effect = run with groyne minus run without):
+
+| | updrift, 50 m next to the groyne | all updrift | downdrift, 50 m next to it |
+|---|---|---|---|
+| long groyne, model | +1960 m3 | +2780 m3 | -2010 m3 |
+| long groyne, XBeach | +2410 m3 | +10780 m3 | +2500 m3 |
+| half groyne, model | +1100 m3 | +1540 m3 | |
+| half groyne, XBeach | +960 m3 | +3610 m3 | |
+
+Next to the groyne the fillet is about right (81% and 115%). XBeach's runs the whole 200 m to
+the side of its 400 m domain, where its lateral boundaries act too (with a groyne XBeach keeps
+12,000 m3 more sand in the domain), and the model's fades over about 100 m. Downdrift XBeach
+builds sand in the groyne's wave shadow and erodes further on; the model erodes right behind
+it, because its structures cast no shadow (not modelled). A longer XBeach domain would separate
+the boundary from the groyne.
+
+Checks added (109 in all, 108 passing; frame time): a groyne traps more the further it
+reaches and a short one traps some; trapping grows smoothly past the breakers; no layer runs to
+its clamp in two years; the fillet slows as it fills; the grains move sand and make none; the
+calm beach keeps its waterline; grains settle only in the water. The first and the last three
+were shown to fail with the code they cover broken. Frame time rose from about 91 to 107 ms
+on the test machine (the substeps and the active-profile scan).
+
 ## Future work, marked 2026-11-14: a bar and a trough
 
 Not started. The deposit is a ramp, highest next to the beach; XBeach's is a detached bar.

@@ -102,6 +102,19 @@ function zipStore(files) {
 
 
 /** Bed level at an XBeach grid corner, metres, positive up. */
+// A structure (groyne, breakwater, seawall) as XBeach sees it: a cell of the case grid that
+// lies in a solid object of the scene. It is written as hard ground, raised to at least
+// XB_STRUCT_CREST_M above the water level and with no erodible sand (ne_layer 0). The export
+// used to leave every structure out (2026-11-17 stress test).
+const XB_STRUCT_CREST_M = 3.0;
+function xbSolidAt(i, j) {
+  const px = i * (REACH_CROSSSHORE / XB_NX) * (width / REACH_CROSSSHORE);
+  const py = j * (REACH_ALONGSHORE / XB_NY) * (height / REACH_ALONGSHORE);
+  const fi = Math.max(0, Math.min(NX + 1, Math.round(px / cellW)));
+  const fj = Math.max(0, Math.min(NY + 1, Math.round(py / cellH)));
+  return solid[IX(fi, fj)] === 1;
+}
+
 function xbBedAt(i, j) {
   const xm = i * (REACH_CROSSSHORE / XB_NX);       // offshore at 0, dune at the land edge
   const ym = j * (REACH_ALONGSHORE / XB_NY);
@@ -191,6 +204,18 @@ function buildXBeach(opts) {
   L.push('ngd       = 1');
   L.push('nd        = 30');
   L.push('');
+  // ---------------- structures
+  buildSolidMask();
+  let nStruct = 0;
+  const hard = [];
+  for (let j = 0; j <= XB_NY; j++) { const r = []; for (let i = 0; i <= XB_NX; i++) { const h = xbSolidAt(i, j); r.push(h); if (h) nStruct++; } hard.push(r); }
+  if (nStruct) {
+    L.push('%%% Structures: hard cells in ne_layer.dep (0 m of erodible sand) %%%');
+    L.push('struct    = 1');
+    L.push('ne_layer  = ne_layer.dep');
+    L.push('');
+  }
+
   L.push('%%% Morphology %%%');
   L.push('morfac    = ' + morfac);
   L.push('morstart  = 0');
@@ -213,10 +238,15 @@ function buildXBeach(opts) {
   const rows = [];
   for (let j = 0; j <= XB_NY; j++) {
     const vals = [];
-    for (let i = 0; i <= XB_NX; i++) vals.push(xbBedAt(i, j).toFixed(4));
+    for (let i = 0; i <= XB_NX; i++) {
+      const z = xbBedAt(i, j);
+      vals.push((hard[j][i] ? Math.max(z, conditions.waterLevel + XB_STRUCT_CREST_M) : z).toFixed(4));
+    }
     rows.push(vals.join(' '));
   }
   const bed = rows.join('\n') + '\n';
+  // erodible sand thickness: none in a structure, more than the model can move elsewhere
+  const neLayer = nStruct ? hard.map(r => r.map(h => (h ? 0 : 10).toFixed(1)).join(' ')).join('\n') + '\n' : null;
 
   // ---------------- jonswap.txt
   const J = [];
@@ -228,7 +258,7 @@ function buildXBeach(opts) {
   J.push('fnyq = 0.3');
   const jonswap = J.join('\n') + '\n';
 
-  return { params: params, bed: bed, jonswap: jonswap, nx: XB_NX, ny: XB_NY, tstop: tstop };
+  return { params: params, bed: bed, jonswap: jonswap, neLayer: neLayer, nStruct: nStruct, nx: XB_NX, ny: XB_NY, tstop: tstop };
 }
 
 // run.sh and run.bat: one command that runs the case. They use the xbeach on the PATH, or
@@ -274,7 +304,9 @@ function xbReadme(p, hours, morfac) {
     '# Coastal Sediment Interface -> XBeach case',
     '',
     'This folder is a complete XBeach case made from the scene in the interface: the bed as it',
-    'was drawn, the waves and water level as they were set.',
+    'is at the moment of export (drawn, then moved by the model), the structures as hard ground,',
+    'the waves and water level as they were set. A nourishment adds sand only while the model',
+    'runs, so the case has what it had placed by then and no more.',
     '',
     '## Run',
     '',
@@ -294,6 +326,10 @@ function xbReadme(p, hours, morfac) {
     '    bed.dep      bed levels in metres, positive up, one cross-shore transect per row,',
     '                 offshore first: ' + (p.ny + 1) + ' rows of ' + (p.nx + 1) + ' values',
     '    jonswap.txt  the wave spectrum at the offshore boundary',
+  ].concat(p.neLayer ? [
+    '    ne_layer.dep the erodible sand over each cell, same layout as bed.dep: 0 in the ' + p.nStruct + ' cells',
+    '                 of structures (raised to ' + XB_STRUCT_CREST_M + ' m above the water level in bed.dep), 10 m elsewhere',
+  ] : []).concat([
     '    run.sh, run.bat   run the case',
     '    scene.json   the scene itself, for the interface',
     '',
@@ -311,7 +347,7 @@ function xbReadme(p, hours, morfac) {
     '',
     'In the Coastal Sediment Interface, on the coast tab, press "open" and pick scene.json or',
     'the ZIP itself. The drawing and the settings come back; the run starts fresh.',
-  ].join('\n') + '\n';
+  ]).join('\n') + '\n';
 }
 
 // Everything the export packs, as text: the case, the scripts that run it, and the scene.
@@ -323,11 +359,12 @@ function xbeachCaseFiles(opts) {
     { name: 'params.txt',  text: p.params  },
     { name: 'bed.dep',     text: p.bed     },
     { name: 'jonswap.txt', text: p.jonswap },
+  ].concat(p.neLayer ? [{ name: 'ne_layer.dep', text: p.neLayer }] : []).concat([
     { name: 'README.md',   text: xbReadme(p, hours, morfac) },
     { name: 'run.sh',      text: xbRunSh() },
     { name: 'run.bat',     text: xbRunBat() },
     { name: 'scene.json',  text: sceneFileText() },
-  ];
+  ]);
 }
 
 function exportXBeach() {

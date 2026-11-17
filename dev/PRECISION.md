@@ -850,6 +850,25 @@ out, and not the bump.
 One check added (95 in all, 94 passing; the frame-time check fails on a slower machine): "long swell flattens the storm deposit
 that a short sea leaves offshore" fails on the previous model (0.116 m at both periods).
 
+## Drift follows the mean wave direction: 80.4 (unchanged)
+
+From the 2026-11-17 stress test. With directional spread, the breaking angle that drives
+longshore transport and draws the crests came from bin 0, the weakest and most oblique edge
+of the spread (-1.5 sigma). Straight-in waves with spread drove strong one-way drift, the
+calm, SLR and recovery presets moved sand against their wave direction, and the storm was
+computed as a -55 deg sea instead of -28. `waveAngle` is now the energy-weighted mean
+direction of the bins.
+
+The score output is the same as before to every printed digit: the scored profiles are
+alongshore means, and on the uniform reference shore the drift nets to zero. Preset breaking
+angles with spread now sit within 2 deg of the same preset without spread (storm -19.0 vs
+-20.0, calm 3.3 vs 3.4, recovery 1.8 vs 2.0).
+
+Three checks added (102 in all, 101 passing; the frame-time check fails on a slower machine):
+near-zero drift for straight-in waves with spread, drift sign follows direction with spread,
+and spread changes drift by no more than it should. The first and third fail on the previous
+model.
+
 ## Future work, marked 2026-11-14: a bar and a trough
 
 Not started. The deposit is a ramp, highest next to the beach; XBeach's is a detached bar.

@@ -225,6 +225,9 @@ const BREAK_OFF = 0.89;
 let waveComponents = [];
 
 let waveHComp      = [];
+// Energy-weighted direction of the components (sum of w H^2 sin th and w H^2 cos th), turned
+// into waveAngle by combineComponents().
+let waveDirS = new Float32Array(0), waveDirC = new Float32Array(0);
 
 let waveH          = new Float32Array(SIZE);
 
@@ -362,7 +365,11 @@ function transformComponent(ci, comp) {
       if (H > Hmax) H = Hmax;
 
       out[idx] = H;
-      if (ci === 0) waveAngle[idx] = th;      // dominant component drives longshore transport
+      // Longshore transport and the crests follow the energy-weighted mean direction of the
+      // components. (Bin 0 alone, as it once was, is the weakest, most oblique edge of the
+      // spread, which ran the drift the wrong way. 2026-11-17 stress test.)
+      const e = comp.weight * H * H;
+      waveDirS[idx] += e * Math.sin(th); waveDirC[idx] += e * Math.cos(th);
       Hprev = H; thPrev = th; kPrev = k; CgPrev = Cg;
     }
   }
@@ -378,6 +385,9 @@ function combineComponents() {
     const arr = waveHComp[c], w = waveComponents[c].weight;
     for (let idx = 0; idx < SIZE; idx++) acc[idx] += w * arr[idx] * arr[idx];
     wsum += w;
+  }
+  for (let idx = 0; idx < SIZE; idx++) {
+    if (waveDirC[idx] > 0 || waveDirS[idx] !== 0) waveAngle[idx] = Math.atan2(waveDirS[idx], waveDirC[idx]);
   }
   const inv = wsum > 0 ? 1 / wsum : 1;
   for (let idx = 0; idx < SIZE; idx++) waveH[idx] = Math.sqrt(acc[idx] * inv);
@@ -454,6 +464,8 @@ function waveFieldStep() {
   }
 
   breakHb = 0; breakDepth = 0;
+  if (waveDirS.length !== SIZE) { waveDirS = new Float32Array(SIZE); waveDirC = new Float32Array(SIZE); }
+  waveDirS.fill(0); waveDirC.fill(0);
 
   for (let c = 0; c < waveComponents.length; c++) transformComponent(c, waveComponents[c]);
 

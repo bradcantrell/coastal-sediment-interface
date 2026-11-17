@@ -747,6 +747,29 @@ console.log(`dir +30 -> mean Q ${qPos.toFixed(5)}; dir -30 -> ${qNeg.toFixed(5)}
 check(qPos > 0 && qNeg < 0, "transport reverses with direction",
       `${qPos.toFixed(5)} vs ${qNeg.toFixed(5)}`);
 
+// --- with directional spread, drift follows the mean direction
+// The breaking angle once came from the most oblique edge bin of the spread, so straight-in
+// waves with any spread drove strong one-way drift and three presets ran sand the wrong way
+// (2026-11-17 stress test). The spread's own preset values are used: 15 and 18 deg.
+{
+  // The breaking mask has hysteresis, so these extra conditions would leave it different for
+  // the checks below: it is put back afterwards, with the conditions.
+  const spread0 = st.cond.spreadDeg, dir0 = st.cond.dirDeg, wb0 = app.run("waveBreaking.slice()");
+  st.cond.spreadDeg = 15; setDir(0);
+  const qSpread0 = app.getState().qMean;
+  setDir(30); const qS30 = app.getState().qMean;
+  st.cond.spreadDeg = 0; setDir(30); const qN30 = app.getState().qMean;
+  st.cond.spreadDeg = 18; setDir(-28); const qStorm = app.getState().qMean;
+  st.cond.spreadDeg = spread0; st.cond.dirDeg = dir0; globalThis.__wb0 = wb0; app.run("waveBreaking.set(globalThis.__wb0)");
+  console.log(`spread 15: dir 0 -> mean Q ${qSpread0.toFixed(6)}, dir +30 -> ${qS30.toFixed(5)} (no spread ${qN30.toFixed(5)}); spread 18 dir -28 -> ${qStorm.toFixed(5)} m3/s`);
+  check(Math.abs(qSpread0) < 0.05 * Math.abs(qS30), "straight-in waves with spread drive almost no drift",
+        `${qSpread0.toFixed(6)} vs ${qS30.toFixed(5)} at +30`);
+  check(qS30 > 0 && qStorm < 0, "with spread, drift follows the wave direction",
+        `+30 -> ${qS30.toFixed(5)}, -28 -> ${qStorm.toFixed(5)}`);
+  check(qS30 > 0.5 * qN30 && qS30 < 1.2 * qN30, "spread changes drift by no more than the spread should",
+        `${qS30.toFixed(5)} with 15 deg spread, ${qN30.toFixed(5)} without`);
+}
+
 // --- a uniform shore produces no alongshore bed change
 setDir(30);
 app.resetMorph();

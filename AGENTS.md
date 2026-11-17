@@ -84,8 +84,12 @@ The fluvial Stam solver is **gone**. In its place, one analytic pass per frame:
 - `transformComponent(i, comp)` — marches j = 1..NY per column carrying `{H, θ, k, Cg}`.
   Snell refraction `sinθ = sinθ_prev·(k_prev/k)`; shoaling on **oblique flux**
   `H = H_prev·√(flux_prev/flux)` with `flux = Cg·cosθ`; breaking via Battjes–Janssen
-  `Qb = exp(−(γh/Hrms)²)`; hard cap `H ≤ γh` at `γ = 0.78`. Stores `waveAngle`.
-- `combineComponents()` — `H² = Σ wᵢHᵢ²` over the directional bins.
+  `Qb = exp(−(γh/Hrms)²)`; hard cap `H ≤ γh` at `γ = 0.78`. Adds each bin's `wᵢHᵢ² sinθ`
+  and `wᵢHᵢ² cosθ` to the direction sums.
+- `combineComponents()` — `H² = Σ wᵢHᵢ²` over the directional bins, and `waveAngle` (read by
+  longshore transport and the crests) is the energy-weighted mean direction from those sums.
+  It once came from bin 0 alone, the most oblique edge of the spread, which ran the drift the
+  wrong way under three presets (2026-11-17 stress test).
 - `computeRunup()` — Stockdon et al. (2006) eq. 18, `R2 = 1.1(η + S)`, plus Iribarren.
 - `morphologyStep()` — cross-shore: conservative implicit diffusion of the bed's distance
   from `equilibriumZ()`, then slumping. See "Cross-shore morphology" below.

@@ -270,7 +270,7 @@ equal morphological time (10 d): correlation 0.986 over 55 cells
 amplitude at equal time: 1.614 vs xbeach 1.792 m (ratio 0.90)
 ```
 
-99 checks. 98 pass on a slower machine; the one failure is a frame-time limit recorded on a faster
+102 checks. 101 pass on a slower machine; the one failure is a frame-time limit recorded on a faster
 machine.
 
 Note: extracting the script and running `node --check` alone is **not** sufficient — it

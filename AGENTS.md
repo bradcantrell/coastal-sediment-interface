@@ -246,7 +246,7 @@ zero, so the bed does not lurch on load.
 ## Testing
 
 ```
-node dev/headless_harness.js index.html      # the coastal model and the export: 99 checks
+node dev/headless_harness.js index.html      # the coastal model and the export: 102 checks
 node dev/interface_harness.js index.html     # the shared interface under this model: 64 checks
 ```
 

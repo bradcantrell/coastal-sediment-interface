@@ -41,7 +41,23 @@ let modelYears = 0;           // elapsed model time: the clock the timeline and 
  * Replaced by the coastal-conditions panel once Phase 1 lands.
  */
 let bedSeedD50 = null;
+// The default bed depends on x alone, and the same few thousand x values are asked for over and
+// over (cell centres, the render grid, the wave grid), so each is worked out once and kept
+// until the canvas width or the grain size changes. Exact, not interpolated.
+let _bedCache = new Map(), _bedCacheW = -1, _bedCacheA = -1;
 function defaultCoastalBedZ(x, y) {
+  // The grain size the beach was built for. The D50 slider used to rebuild the whole seabed
+  // the moment it moved, with no sand budget and nothing in the change overlay; it now changes
+  // how the sand moves, and clear builds the beach again for it (2026-11-17 stress test).
+  const A = deanA(bedSeedD50 != null ? bedSeedD50 : conditions.d50);
+  if (width !== _bedCacheW || A !== _bedCacheA || _bedCache.size > 50000) {
+    _bedCache.clear(); _bedCacheW = width; _bedCacheA = A;
+  }
+  let z = _bedCache.get(x);
+  if (z === undefined) { z = defaultBedProfile(x, A); _bedCache.set(x, z); }
+  return z;
+}
+function defaultBedProfile(x, A) {
   // Cross-shore runs along x: offshore at x=0 (left), dune at x=width (right).
   // Waterline lands at 0.74 of the width, in the right third.
   //
@@ -55,13 +71,10 @@ function defaultCoastalBedZ(x, y) {
   // Datum, NOT the live water level. Water rises over a fixed bed; if the profile followed
   // conditions.waterLevel a surge would lift the seabed with it and erode nothing.
   const wl = 0;
-  // The grain size the beach was built for. The D50 slider used to rebuild the whole seabed
-  // the moment it moved, with no sand budget and nothing in the change overlay; it now changes
-  // how the sand moves, and clear builds the beach again for it (2026-11-17 stress test).
-  const A  = deanA(bedSeedD50 != null ? bedSeedD50 : conditions.d50);
 
   if (Y >= 0) {                                     // shoreface: Dean h = A y^(2/3)
-    return (wl - A * Math.pow(Y, 2 / 3)) / M_PER_BED_UNIT;
+    // cbrt(Y*Y), not pow(Y, 2/3): with nothing drawn every bed lookup lands here.
+    return (wl - A * Math.cbrt(Y * Y)) / M_PER_BED_UNIT;
   }
 
   const run  = -Y;
@@ -155,8 +168,19 @@ const BERM_TOP_M     = 1.5;   // metres above still water: top of the active bea
 // inside the first model day; six XBeach runs on this bed are still cutting the beach at day
 // ten, and their deposit spreads seaward about as fast at Hs 2 m as at 3.4 m. This value is
 // set from the storm run's deposit, day by day (dev/PRECISION.md, 2026-11-14).
-const TERRACE_SLOPE = 0.023;   // storm nearshore slope, read off six XBeach runs (0.021 to 0.024)
-const TERRACE_YT_PER_A3 = Math.pow((2 / 3) / TERRACE_SLOPE, 3);   // Dean slope = cap at Y = this * A^3
+const TERRACE_SLOPE = 0.023;   // storm nearshore slope on 0.3 mm sand, read off six XBeach runs (0.021 to 0.024)
+// The slope grows with the grain size, in proportion to Dean's A. It was one slope for every
+// sand, fitted on 0.3 mm, so a coarse beach (steeper Dean seabed, same flat terrace) had far
+// more to cut: 2.3 times the fine beach's erosion (2026-11-17 stress test, item 33). XBeach's
+// three 0.5 mm runs end on 0.028 to 0.037 against 0.022 to 0.026 on 0.3 mm (1.27 to 1.47 times),
+// and A is 1.29 times larger. Scaled with A, the terrace starts the same distance offshore on
+// every sand and the storm profile is the fine one stretched in height.
+const TERRACE_D50_REF = 0.30, TERRACE_A_EXP = 0.5;
+let _terraceARef = 0;
+function terraceSlope(A) {
+  if (!_terraceARef) _terraceARef = deanA(TERRACE_D50_REF);
+  return TERRACE_SLOPE * Math.pow(A / _terraceARef, TERRACE_A_EXP);
+}
 // Fitted to the six XBeach runs: at 0.10 and 0.20 the mean profile error is 0.107
 // and 0.138 m against 0.092 m here. XBeach's scarp foot sits within 0.6 m of the still water
 // level in every run, which is the same statement.
@@ -222,13 +246,22 @@ let breakerGamma = 0.78;
 // interface, and it is the one cause we can remove without changing the physics: a cell
 // starts breaking at BREAK_ON and keeps breaking down to BREAK_OFF, so the mask changes
 // only when the wave height moves a real distance past the limit rather than crossing it.
-const BREAK_ON  = 0.97;
+// 0.85 and 0.77 since 2026-11-18. At 0.97 and 0.89 with Battjes-Janssen's full dissipation the
+// waves lost so much height before reaching the limit that the surf zone narrowed by a third
+// (100 m to 67 m for 2 m waves) and the half groyne trapped 1.7 times XBeach's fillet. At 0.85,
+// about 6% of waves breaking, the surf zone is 107 m and the groyne fillets match (see
+// longshoreGain).
+const BREAK_ON  = 0.85;
 
-const BREAK_OFF = 0.89;
+const BREAK_OFF = 0.77;
 
 let waveComponents = [];
 
 let waveHComp      = [];
+// The wavenumber in each cell from the latest march, and the period it was solved for. Every
+// component has the peak period, so one solve serves them all and applyField() reads it back
+// instead of solving again from the deep-water guess in every cell (frame time, 2026-11-18).
+let waveK = null, waveKT = NaN;
 // Energy-weighted direction of the components (sum of w H^2 sin th and w H^2 cos th), turned
 // into waveAngle by combineComponents().
 let waveDirS = new Float32Array(0), waveDirC = new Float32Array(0);
@@ -325,6 +358,10 @@ function transformComponent(ci, comp) {
   const T = comp.Tp;
   const out = waveHComp[ci];
   out.fill(0);
+  if (ci === 0) {
+    if (!waveK || waveK.length !== SIZE) waveK = new Float64Array(SIZE);
+    waveK.fill(0); waveKT = T;
+  }
 
   // Cross-shore step length in metres (marching is +x, from offshore to dune).
   const dxm = cellW * (REACH_CROSSSHORE / Math.max(width, 1));
@@ -345,6 +382,7 @@ function transformComponent(ci, comp) {
       if (h <= 0.05 || solid[idx]) { out[idx] = 0; continue; }
 
       const k  = wavenumberK(T, h, kPrev);
+      if (ci === 0) waveK[idx] = k;
       const Cg = groupVelocity(T, h, k);
 
       // refraction: alongshore (y) wavenumber k*sin(theta) conserved
@@ -362,9 +400,12 @@ function transformComponent(ci, comp) {
         const Qb = Math.exp(-Math.pow(Hmax / Hrms, 2));
         const D  = 0.25 * RHO * GRAV * (1 / T) * Qb * Hmax * Hmax;
         if (D > 0) {
-          const E  = 0.125 * RHO * GRAV * H * H;
+          // H is the significant height, so the energy is rho g H^2 / 16 (rho g Hrms^2 / 8).
+          // It was rho g H^2 / 8, which took off half the energy Battjes and Janssen do
+          // (2026-11-17 stress test, item 34).
+          const E  = RHO * GRAV * H * H / 16;
           const dE = D * dxm / flux;
-          H = Math.sqrt(8 * Math.max(E - dE, 0) / (RHO * GRAV));
+          H = Math.sqrt(16 * Math.max(E - dE, 0) / (RHO * GRAV));
         }
       }
       if (H > Hmax) H = Hmax;
@@ -419,7 +460,7 @@ function applyField() {
         u[idx] = 0; v[idx] = 0; waveBreaking[idx] = 0; continue;
       }
 
-      const k  = wavenumberK(T, h);
+      const k  = (waveKT === T && waveK[idx] > 0) ? waveK[idx] : wavenumberK(T, h);
       const sh = Math.max(Math.sinh(k * h), 1e-6);
       const amp = (waveH[idx] / 2) * ((2 * Math.PI / T) / sh);   // m/s near the bed
 
@@ -514,15 +555,22 @@ let morphEnabled = true;
 
 let lastMaxErosion = 0, lastMaxAccretion = 0, barDistanceM = 60, stormNow = 0;
 
-let shoreRef = null, refWaterLevel = 0;   // per alongshore row (GH)
+let shoreRef = null, refWaterLevel = 0;   // per alongshore row (GH), at mean sea level
+let shoreLive = null, liveWaterLevel = 0;  // the same at the live water level (tide or surge)
+// Mean sea level: datum plus sea-level rise. The water level slider (tide or surge) rides on it.
+function meanSeaLevel() { return conditions.slr || 0; }
 
 
 /**
  * Waterline reference per row: where the bed WITHOUT the morphology layer meets the water.
  *
- * It follows the water level and nothing else. The target profile hangs from it, so a
- * surge or sea-level rise lifts the target and moves its origin up the beach, and the
- * profile responds: sand comes off the beach to raise the nearshore.
+ * Two of them. The beach the waves rebuild in calm hangs from mean sea level (datum plus
+ * SLR), so sea-level rise lifts it for good and sand comes off the beach to raise the
+ * nearshore. The storm cut hangs from the live water level, so a surge lets a storm cut
+ * higher while it lasts and lets go when the water goes down. Until 2026-11-18 the whole
+ * target followed the live water level, so a surge acted as a sea-level rise: 0.1 m waves at
+ * +1 m cut 5 m3/m in ten days, and the beach a one-day surge cut never came back (stress
+ * test item 31).
  *
  * It is taken from the bed without the morphology layer on purpose. Re-anchoring to the
  * evolving shoreline each step makes the target chase the bed, which diverges.
@@ -541,16 +589,29 @@ let shoreRef = null, refWaterLevel = 0;   // per alongshore row (GH)
 let shoreSig = '';
 function drawnBedSig() { return JSON.stringify(bedPoints) + JSON.stringify(bedXSections) + bedSeedD50; }
 function shoreRefAt(gy) {
-  if (gy === 0) { const sig = drawnBedSig(); if (sig !== shoreSig) { shoreSig = sig; shoreRef = null; } }
-  if (!shoreRef || refWaterLevel !== conditions.waterLevel) {
-    if (!shoreRef) shoreRef = new Float32Array(GH);
-    refWaterLevel = conditions.waterLevel;
+  if (gy === 0) { const sig = drawnBedSig(); if (sig !== shoreSig) { shoreSig = sig; shoreRef = null; shoreLive = null; } }
+  const msl = meanSeaLevel();
+  if (!shoreRef || shoreRef.length !== GH || refWaterLevel !== msl) {
+    shoreRef = new Float32Array(GH);
+    refWaterLevel = msl;
     for (let j = 0; j < GH; j++) {
-      const s = shorelineXPx(j, true);
+      const s = shorelineXPx(j, true, msl);
       shoreRef[j] = s === null ? -1 : s;
     }
   }
   return shoreRef[gy] >= 0 ? shoreRef[gy] : null;
+}
+/** The same reference at the live water level, which the storm cut hangs from. */
+function shoreLiveAt(gy) {
+  if (!shoreLive || shoreLive.length !== GH || liveWaterLevel !== conditions.waterLevel) {
+    shoreLive = new Float32Array(GH);
+    liveWaterLevel = conditions.waterLevel;
+    for (let j = 0; j < GH; j++) {
+      const s = shorelineXPx(j, true, liveWaterLevel);
+      shoreLive[j] = s === null ? -1 : s;
+    }
+  }
+  return shoreLive[gy] >= 0 ? shoreLive[gy] : null;
 }
 
 
@@ -564,9 +625,14 @@ function settlingVelocity(d50mm) {
 
 
 /** Dean profile coefficient A in m^(1/3), from grain size. */
+// Kept for the last grain size asked: the default bed calls this for every cell it builds,
+// and with the settling velocity it was half of the coast's frame time.
+let _deanD50 = NaN, _deanAVal = 0;
 function deanA(d50mm) {
+  if (d50mm === _deanD50) return _deanAVal;
   const ws = Math.max(settlingVelocity(d50mm) * 100, 0.1);   // cm/s
-  return 0.067 * Math.pow(ws, 0.44);
+  _deanD50 = d50mm; _deanAVal = 0.067 * Math.pow(ws, 0.44);
+  return _deanAVal;
 }
 
 
@@ -586,9 +652,9 @@ function stormIntensity() {
 
 /** Waterline position in pixels for a morph-grid column, or null. */
 /** Waterline position in pixels along x for a morph-grid row, or null. */
-function shorelineXPx(gj, base) {
+function shorelineXPx(gj, base, level) {
   const y = (gj + 0.5) * DEPO_CELL;
-  const wlU = conditions.waterLevel / M_PER_BED_UNIT;
+  const wlU = (level != null ? level : conditions.waterLevel) / M_PER_BED_UNIT;
   const fz = base ? bedZ0 : bedZ;
   let xPrev = 0, zPrev = fz(0, y);
   for (let x = DEPO_CELL; x <= width; x += DEPO_CELL) {
@@ -607,9 +673,12 @@ function shorelineXPx(gj, base) {
  * Equilibrium bed elevation in metres.
  * Y is metres offshore of the waterline: positive seaward, negative landward.
  */
-function equilibriumZ(Y, storm, A) {
-  // The water level shoreRefAt() last anchored at, which is the live one once a step has run.
+function equilibriumZ(Y, storm, A, Ylive) {
+  // The calm beach hangs from mean sea level, the storm cut from the live water level (see
+  // shoreRefAt). Ylive is Y measured from the live waterline; without it both use Y.
   const wl = refWaterLevel;
+  const wlLive = Ylive != null ? liveWaterLevel : wl;
+  if (Ylive == null) Ylive = Y;
   // The Dean curve, with its slope capped. Dean steepens without limit toward the waterline;
   // under storm waves the bed cannot hold that. In all six XBeach reference runs the final
   // nearshore bed is one straight line at about 0.023 (1 in 43), from roughly 1.6 m of water
@@ -619,11 +688,19 @@ function equilibriumZ(Y, storm, A) {
   // Between calm and storm the target is a blend of the two profiles, so in calm it is
   // exactly the profile the default bed is seeded with and nothing moves.
   // cbrt(Y*Y) rather than pow(Y, 2/3): this runs once per cell per frame.
-  const calm = Y >= 0 ? wl - A * Math.cbrt(Y * Y) : wl + BEACH_SLOPE * (-Y);
+  // Landward of the waterline the calm beach is the one the default bed is built with: the
+  // beach face up to the berm top, then the dune at its own slope. It used to go on up at the
+  // beach slope, above the dune, so whenever water rose high enough to reach the dune the
+  // target asked for sand there and took it from the beach (0.1 m waves on a 3 m surge cut
+  // 10 m3/m in ten days).
+  const calm = Y >= 0 ? wl - A * Math.cbrt(Y * Y)
+             : -Y * BEACH_SLOPE <= BERM_TOP_M ? wl + BEACH_SLOPE * (-Y)
+             : wl + BERM_TOP_M + (-Y - BERM_TOP_M / BEACH_SLOPE) * DUNE_SLOPE;
   if (storm <= 0) return calm;
-  const Yt = TERRACE_YT_PER_A3 * A * A * A;           // where the Dean slope equals the cap
-  const cut = Y >= Yt ? wl - A * Math.cbrt(Y * Y)
-                      : wl - A * Math.cbrt(Yt * Yt) + TERRACE_SLOPE * (Yt - Y);
+  const sT = terraceSlope(A);
+  const Yt = Math.pow((2 / 3) * A / sT, 3);           // where the Dean slope equals the cap
+  const cut = Ylive >= Yt ? wlLive - A * Math.cbrt(Ylive * Ylive)
+                          : wlLive - A * Math.cbrt(Yt * Yt) + sT * (Yt - Ylive);
   return calm + (cut - calm) * storm;
 }
 
@@ -688,10 +765,12 @@ function convergenceProbe(dtModel, steps) {
   if (!morphGrid || !morphEnabled || !(dtModel > 0)) return null;
   const keep = { morph: Float32Array.from(morphGrid), long: Float32Array.from(longGrid), pick: pickGrid ? Float32Array.from(pickGrid) : null,
                  brk: Float32Array.from(waveBreaking), shoreRef: shoreRef ? Float32Array.from(shoreRef) : null, refWaterLevel,
+                 shoreLive: shoreLive ? Float32Array.from(shoreLive) : null, liveWaterLevel,
                  er: lastMaxErosion, ac: lastMaxAccretion, bar: barDistanceM, storm: stormNow, qPeak, qMean, years: modelYears, last: lastDtModel };
   const restore = () => {
     morphGrid.set(keep.morph); longGrid.set(keep.long); if (keep.pick) pickGrid.set(keep.pick);
     waveBreaking.set(keep.brk); shoreRef = keep.shoreRef ? Float32Array.from(keep.shoreRef) : null; refWaterLevel = keep.refWaterLevel;
+    shoreLive = keep.shoreLive ? Float32Array.from(keep.shoreLive) : null; liveWaterLevel = keep.liveWaterLevel;
   };
   const runAt = function (dt, n) {
     restore();
@@ -808,6 +887,8 @@ function morphologyStep(dtModel) {
   for (let gy = 0; gy < GH; gy++) {
     const xShore = shoreRefAt(gy);
     if (xShore === null) continue;
+    const xLive = stormNow > 0 ? shoreLiveAt(gy) : xShore;
+    if (xLive === null) continue;
     const y = (gy + 0.5) * DEPO_CELL;
     // The profile moves with the sand the drift has brought or taken: the longshore layer's
     // volume in this row, spread over the active height (closure depth to berm top), is how
@@ -825,12 +906,12 @@ function morphologyStep(dtModel) {
       const z = bedZ(x, y) * M_PER_BED_UNIT;
       zr[gx] = z;
       const Y = (xShore - x) * xMPerPx - shift;
-      const du0 = z - equilibriumZ(Y, stormNow, A);
+      const du0 = z - equilibriumZ(Y, stormNow, A, (xLive - x) * xMPerPx - shift);
       // Waves cut the bed only as high as they reach: WAVE_REACH_PER_HS x Hs above the live
       // water level. Above that the bed is dry and is lowered only by slumping (below).
       // Sand can be put back higher than it can be cut, up to the berm top, so a beach
       // that a storm has lowered can rebuild in calm.
-      if (z > reach && !(du0 < 0 && z <= refWaterLevel + BERM_TOP_M)) { act[gx] = 0; u[gx] = 0; continue; }
+      if (z > reach && !(du0 < 0 && z <= conditions.waterLevel + BERM_TOP_M)) { act[gx] = 0; u[gx] = 0; continue; }
       u[gx] = du0;
       act[gx] = 1;
       // Mobility: 1 down to half the depth of closure, then linearly to 0 at closure.
@@ -1013,7 +1094,7 @@ function resetMorphology() {
   if (!morphGrid) return;
   morphGrid.fill(0);
   if (longGrid) longGrid.fill(0);
-  shoreRef = null;
+  shoreRef = null; shoreLive = null;
   bedSeedD50 = conditions.d50;       // the beach is built again for the grain size now set
   // and the readouts start again with it (they kept the old run's numbers)
   lastMaxErosion = 0; lastMaxAccretion = 0; qPeak = 0; qMean = 0; convLast = null;
@@ -1044,9 +1125,12 @@ const POROSITY_LS = 0.40;
 let longGrid = null;
 
 // Morphological rate multiplier for the alongshore term (the "longshore" slider): CERC as it
-// stands moves the bed far faster than this model's other terms and the XBeach runs. 0.0096 is
-// the old 0.03 over sqrt(g), now that the formula has its sqrt(g).
-let longshoreGain = 0.0096;
+// stands moves the bed far faster than this model's other terms and the XBeach runs. It was 0.0096
+// (the old 0.03 over sqrt(g), once the formula had its sqrt(g)). With Battjes-Janssen's full
+// dissipation and the breaker height taken at its peak (2026-11-18) the drift came out 1.2 to 1.9
+// times larger, and 0.0064 is refitted to the two XBeach groyne runs: the fillet within 50 m
+// updrift is 80% of XBeach's for the long groyne and 105% for the half one (81% and 115% before).
+let longshoreGain = 0.0064;
 
 let qLong = new Float32Array(NY + 2);
 
@@ -1090,10 +1174,15 @@ let shoreShift = new Float64Array(NY + 2);     // m, seaward, from the longshore
  */
 function computeLongshore() {
   for (let j = 1; j <= NY; j++) {
-    let iBreak = -1, iShore = -1;
+    // The breaker height is the highest the wave stands before it breaks, at or seaward of the
+    // first breaking cell, with its angle there. (It was the height in that cell, but breaking
+    // takes height off before the mask turns on: with Battjes-Janssen's full dissipation a
+    // 3.4 m storm wave was down to 2.1 m by then.)
+    let iBreak = -1, iShore = -1, hPeak = 0, aPeak = 0;
     for (let i = 1; i <= NX; i++) {
       const idx = IX(i, j);
-      if (iBreak < 0 && waveBreaking[idx]) { iBreak = i; HbAt[j] = waveH[idx]; alphaAt[j] = waveAngle[idx]; }
+      if (iBreak < 0 && waveH[idx] > hPeak) { hPeak = waveH[idx]; aPeak = waveAngle[idx]; }
+      if (iBreak < 0 && waveBreaking[idx]) { iBreak = i; HbAt[j] = hPeak; alphaAt[j] = aPeak; }
       if (depthAt(i, j) <= 0.05) { iShore = i; break; }
     }
     hasBreak[j] = iBreak > 0 ? 1 : 0;
@@ -1657,7 +1746,7 @@ registerModel({
     { id: 'coast-waves', after: 'thumb', target: guideSection('reset-coastal', 'coastal-readout'), title: 'Waves and water', text:
       `<p>These are the conditions the beach faces. <b>preset</b> loads a set of them, a calm summer, a winter storm, the recovery after a storm, or SLR 2100, a calm summer with 0.9 meters of sea level rise. Moving any slider switches it back to custom.</p>
        <p><b>Hs</b> is the wave height, the average of the biggest third of the waves. <b>Tp</b> is the time between wave crests. Longer periods are swell from far away, and at the same height they carry more energy. <b>direction</b> is the angle the waves arrive from, where 0 is straight at the shore, and <b>spread</b> is how much that angle varies.</p>
-       <p><b>water level</b> is the tide or a storm surge, and <b>SLR</b> is sea level rise added on top. <b>D50</b> is the grain size of the sand in millimeters. Fine sand is about 0.2 and coarse sand about 1. A new D50 changes how the sand moves. Press <b>clear</b> to build the beach again for that grain size. <b>runup slope</b> is the steepness of the beach face used only for the runup and ξ readouts. It does not reshape the beach you see.</p>
+       <p><b>water level</b> is the tide or a storm surge, and <b>SLR</b> is sea level rise added on top. In this model the beach settles around mean sea level, so SLR moves it for good. A surge lets storm waves cut higher up the beach while it lasts. Afterward calmer waves slowly bring sand back, and the beach can rebuild at least partly. <b>D50</b> is the grain size of the sand in millimeters. Fine sand is about 0.2 and coarse sand about 1. A new D50 changes how the sand moves. Press <b>clear</b> to build the beach again for that grain size. <b>runup slope</b> is the steepness of the beach face used only for the runup and ξ readouts. It does not reshape the beach you see.</p>
        <p>The blue lines read the result. How high the waves are where they break and how deep the water is there, how far up the beach they run (<b>runup R2</b>), and <b>ξ</b>, which says how they break, spilling gently on a flat beach or plunging and surging on a steep one.</p>` },
     { id: 'coast-morph', after: 'coast-waves', target: guideSection('reset-morph', 'morph-readout'), title: 'How the beach changes', text:
       `<p>This section is the beach changing shape over time. <b>model rate</b> is how many days of model time pass each second, so you can watch years go by in a minute. <b>dune</b> is how much sand the wind adds to the dune each year. <b>longshore</b> is how strongly the waves carry sand along the shore rather than up and down it.</p>
@@ -1682,7 +1771,7 @@ registerModel({
     if (morphGrid && morphGrid.length === ogw * ogh) morphGrid = resampleBedGrid(morphGrid, ogw, ogh);
     if (longGrid && longGrid.length === ogw * ogh) longGrid = resampleBedGrid(longGrid, ogw, ogh);
     if (pickGrid && pickGrid.length === ogw * ogh) pickGrid = resampleBedGrid(pickGrid, ogw, ogh);
-    shoreRef = null;
+    shoreRef = null; shoreLive = null;
   },
   bedGridsReady() {
     morphGrid = new Float32Array(GW * GH);
@@ -1723,7 +1812,7 @@ registerModel({
 <div class="sect-label">morphology <button class="reset-btn" id="btn-conv" title="run the same interval of model time at dt and at dt/2 and report how far the answer moves">conv</button> <button class="reset-btn" id="reset-morph">clear</button></div>
 <div class="ctrl-row"><label>model rate <span class="val" id="mrate-val">2.0</span> d/s</label><input type="range" id="m-rate" min="0.1" max="30" value="2" step="0.1"></div>
 <div class="ctrl-row"><label>dune <span class="val" id="dune-val">10</span> m&sup3;/m/yr</label><input type="range" id="m-dune" min="0" max="30" value="10" step="1"></div>
-<div class="ctrl-row"><label>longshore <span class="val" id="ls-val">0.0096</span></label><input type="range" id="m-long" min="0" max="0.06" value="0.0096" step="0.0002"></div>
+<div class="ctrl-row"><label>longshore <span class="val" id="ls-val">0.0064</span></label><input type="range" id="m-long" min="0" max="0.06" value="0.0064" step="0.0002"></div>
 <div id="morph-readout" style="font-size:9px;color:rgba(255,190,120,0.6);line-height:1.5;margin:4px 0 3px 0;font-variant-numeric:tabular-nums;">
   erosion <span id="ro-er">0.00</span> m &nbsp; accretion <span id="ro-ac">0.00</span> m<br>
   storm <span id="ro-storm">0.00</span> &nbsp; breakpoint <span id="ro-bar">–</span> m<br>
@@ -1750,7 +1839,8 @@ registerModel({
         conditions.Tp        = g(CP.tp);
         conditions.dirDeg    = g(CP.dir);
         conditions.spreadDeg = g(CP.spread);
-        conditions.waterLevel = g(CP.wl) + g(CP.slr);
+        conditions.slr       = g(CP.slr);   // mean sea level: the beach hangs from it (shoreRefAt)
+        conditions.waterLevel = g(CP.wl) + conditions.slr;
         conditions.d50       = g(CP.d50);
         // Before the run has started (a page load restoring its scene, or setting up) the beach
         // is built for the grain size; once it runs, clear does that.

@@ -121,7 +121,13 @@ bed below the waterline by storm waves. Sea-level rise is basic: the target foll
 - `shoreRefAt`: the anchor is found again when the drawn bed changes (`drawnBedSig`).
 - `bedSeedD50`: the grain size the default bed was built for; D50 reshapes the bed only
   before the run starts or on clear.
-- CERC has its sqrt(g); `longshoreGain` 0.0096 (was 0.03 without it, same bed).
+- CERC has its sqrt(g); `longshoreGain` 0.0064 (0.03 without the sqrt(g), 0.0096 with it,
+  refitted to the XBeach groyne runs 2026-11-18 after the breaking change below).
+- 2026-11-18 (Brad's decisions on the stress test): breaking energy is rho g Hs^2/16
+  (Battjes-Janssen in full), the mask thresholds are 0.85/0.77, and the drift takes the
+  breaker height at its peak before the first breaking cell; the storm terrace slope scales
+  as A^0.5 (`terraceSlope`); the calm target follows the seeded berm and dune; frame time
+  roughly halved (cached Dean A, cached default bed, one wavenumber solve per frame).
 - Bins at |dir| >= 90 are left out; nourishment respects rotation; R resets the year;
   clear resets the readouts; slope is "runup slope"; the coast has its own objects step in
   the guide; elevations show in metres (`model.bed.scale`).
@@ -162,13 +168,16 @@ Each of these was measured against XBeach and is covered by a check. `dev/PRECIS
 the numbers and the reasons; do not undo one without reading its entry there.
 
 - **The target, `equilibriumZ(Y, storm, A)`.** Calm: Dean seaward, `BEACH_SLOPE` landward,
-  which is the seeded bed. Storm: Dean with its slope capped at `TERRACE_SLOPE` (0.023), the
-  tangent line continuing up the beach. The two are blended by `storm`. There is no bar drawn
+  which is the seeded bed. Storm: Dean with its slope capped at `terraceSlope(A)` (0.023 on 0.3 mm
+  sand, times (A / A(0.3))^0.5), the tangent line continuing up the beach. The two are blended by `storm`. There is no bar drawn
   into the target; the bar is the sand cut from above the terrace.
 - **`stormIntensity()` is wave height only**: 0 at 1.2 m, 1 from 2.0 m. A surge acts through
   the water level, not through this number.
-- **The target follows the live water level.** `shoreRefAt()` re-derives the waterline, from
-  the bed without the morphology layer, whenever the water level changes. Taking it from the
+- **The calm target hangs from mean sea level, the storm cut from the live water level.**
+  `shoreRefAt()` (datum + SLR) and `shoreLiveAt()` (tide or surge on top) re-derive the
+  waterline, from the bed without the morphology layer, whenever their level changes. A surge
+  is not a sea-level rise: under small waves it cuts nothing, and the beach a storm surge cut
+  comes back in calm (until 2026-11-18 the whole target followed the live level). Taking it from the
   evolving bed makes the target chase the bed and diverge.
 - **Depth of closure.** `2.0 + 0.8 * Hs` m of water. Mobility is 1 to half that depth, then
   falls as a cube to 0 at 1.25 times it. A straight fade to 0 at the closure depth left a

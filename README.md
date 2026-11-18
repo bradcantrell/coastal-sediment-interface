@@ -35,17 +35,18 @@ See `PLAN.md` for the full design and the phase gates.
 | Dispersion | Newton solution of ω² = gk·tanh(kh) |
 | Refraction | Snell, alongshore wavenumber k·sinθ conserved |
 | Shoaling | Energy-flux conservation on the oblique flux Cg·cosθ |
-| Breaking | Battjes & Janssen (1978), γ = 0.78, Qb = exp(−(γh/Hrms)²) |
+| Breaking | Battjes & Janssen (1978), γ = 0.78, Qb from the explicit form exp(−(γh/Hrms)²), wave energy ρgHs²/16 with Hs = √2·Hrms |
 | Runup | Stockdon et al. (2006), R2 on a plane foreshore |
 | Wave input | 1 component (monochromatic) or 7 wrapped-Gaussian directional bins |
 | Profile | Dean h = A·y^(2/3), A from Soulsby (1997) settling velocity |
-| Storm profile | Dean with its slope capped at 0.023 (1 in 43), the line XBeach cuts across the waterline |
+| Storm profile | Dean with its slope capped at 0.023 (1 in 43) on 0.3 mm sand, the line XBeach cuts across the waterline, steeper on coarser sand, in proportion to √A, a choice fitted to the three 0.5 mm XBeach runs |
+| Water level | The calm beach hangs from mean sea level (the bed's datum plus sea-level rise), the storm cut from the live water level, so a surge cuts only while storm waves run on it |
 | Cross-shore | Conservative diffusion of the bed's distance from that profile, fading out around a depth of closure of 2 m + 0.8·Hs, deeper under long-period swell |
 | Dune | Waves cut up to 0.15·Hs above the water; behind that the bed slumps at 0.3 (wet) or 1.0 (dry) |
 | Dune recovery | Wind moves sand from the dry beach to a cut dune at a set rate (default 10 m³/m/yr), in calm only |
 | Alongshore spreading | The same diffusion run along the shore over the wet bed, stopped by structures |
 | Longshore | CERC, Q = K/(16(s−1))·√(g/γ)·Hb^2.5·sin(2αb), with αb measured against the local shoreline (one-line feedback) |
-| Bed change | dz/dt = −G·(1/(1−p))·(dQ/dy)/W_active, over the active profile from the depth of closure to the berm top; G = 0.0096 is the **longshore** slider, which slows CERC to the pace of the cross-shore model and the XBeach runs |
+| Bed change | dz/dt = −G·(1/(1−p))·(dQ/dy)/W_active, over the active profile from the depth of closure to the berm top; G = 0.0064 is the **longshore** slider, which slows CERC to the pace of the cross-shore model and the XBeach runs |
 | Time step | The bed takes steps of at most 1 model hour, so a storm cuts the same at any rate setting or frame rate |
 
 **Not modelled:** diffraction and sheltering (a structure stops waves only in its own cells; the shoreward

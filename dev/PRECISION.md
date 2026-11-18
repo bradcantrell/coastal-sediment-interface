@@ -929,3 +929,38 @@ Not started. The deposit is a ramp, highest next to the beach; XBeach's is a det
 The two cheap attempts are recorded above under "Bar position scored on the deposit centre".
 The route that would work is a wave-driven cross-shore transport in place of the relaxation
 toward a target. Brad marked it as something to address later.
+
+## Brad's decisions on the stress test (2026-11-18): 80.7 (was 80.4)
+
+Brad chose: water level as a surge on mean sea level (item 31), the storm slope depending on
+grain size (33), Battjes-Janssen in full and refitted (34), optimise the frame time.
+
+- **Item 31.** The calm target hangs from mean sea level (datum + SLR, `shoreRefAt`), the storm
+  cut from the live water level (`shoreLiveAt`). The calm target above the berm top now follows
+  the seeded dune slope; it used to go on up at the beach slope, which made any high water pull
+  sand up into the dune. Stress-test repro C9 (10 days): 0.1 m waves on +1 m cut 5.2 m3/m, now
+  0.1 (the floor every case reads); a 1-day 2 m surge under 0.6 m waves cut 9.0 and never came
+  back, now nothing is cut. SLR 0.5 m still cuts (3.1 m3/m in 60 days); a 2-day storm on a
+  0.8 m surge cuts 20.5 m3/m and 60 days of 0.9 m swell at datum bring all but 2.5 back. Every
+  scored case has storm intensity 1, where the cut hangs from the live level as before: the
+  scores are unchanged by this item. Left: under 1.2 m waves a surge does nothing, however high
+  (storm intensity is wave height only, the calm-beach rule).
+- **Item 33.** `terraceSlope(A) = 0.023 (A / A(0.3 mm))^k`. XBeach's 0.5 mm runs end on
+  0.028 to 0.037 against 0.022 to 0.026 on 0.3 mm. Two exponents scored: k = 1 gives 77.9
+  (coarse cases worse, rmse 0.24 m on coarse-storm), k = 0.5 gives 81.1; the 0.3 mm cases are
+  identical at both. k = 0.5 is a fit to three runs, so it is the kind of change to distrust.
+  Storm cut against grain size (repro R12, 10 days): 0.3 mm 40.6 m3/m, 0.5 mm 47.0 (XBeach
+  ratio 1.21, model 1.16), 2 mm 61.2 (was 92, 2.3 times the fine beach).
+- **Item 34.** Breaking energy E = rho g Hs^2 / 16. With the old mask thresholds the surf
+  zone shrank by a third (2 m waves: 100 to 67 m) and the drift read the breaker height after
+  breaking had taken height off (storm: 2.1 m for a 3.4 m wave). Now the drift takes the peak
+  height seaward of the first breaking cell, the mask is 0.85/0.77 of gamma h (about 6% of waves
+  breaking; surf zone 107 m), and `longshoreGain` 0.0064 is refitted to the XBeach groyne runs:
+  fillet within 50 m updrift 80% of XBeach for the long groyne and 105% for the half one (81%
+  and 115% before). Tried: 0.85 at 0.0096 (106%, 136%), 0.75 at 0.0064 (78%, 69%), 0.75 at
+  0.0096 (104%, 91%, but a surf zone 1.5 times wider than before). Score: flux residual
+  0.0027 -> 0.0052 (a "non-breaking" column now loses a little energy where a few waves break),
+  CERC r2 0.9995 -> 0.9998; 81.1 -> 80.7. Profiles unchanged.
+- **Frame time.** About 110 ms -> 55 ms on the test machine: `deanA` cached for the last grain
+  size (it and the settling velocity were half the frame), the default bed cached by x (exact),
+  and `applyField` reads the wavenumber the march solved. The tripwire is re-recorded at 55 ms.

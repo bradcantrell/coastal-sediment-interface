@@ -1150,6 +1150,37 @@ function cercQ(Hb, alpha) {
 }
 
 
+// Structure heights (Brad, 2026-11-18: groynes work as the river's objects do). Every
+// structure has a crest, metres above datum (ob.top, the slider beside a selected object;
+// obTop() gives STRUCT_TOP_M to one from before). With its crest above the water it is solid,
+// as every structure used to be: it stops the waves and the drift through its cells. With the
+// water above its crest (a surge, a low groyne) it is not: the waves pass over, and of the
+// drift through each of its cells it stops the share of the water column below its crest.
+const STRUCT_TOP_M = 0.5;
+let structCrest = null, structSig = null;     // per flow cell, m above datum; NaN with no structure
+function coastStructures() {
+  if (!structCrest || structCrest.length !== SIZE) { structCrest = new Float32Array(SIZE); structSig = null; }
+  const act = obstacles.filter(o => isObstacleActive(o) && obHasHeight(o));
+  const sig = JSON.stringify(act.map(o => [o.type, o.x, o.y, o.w, o.h, o.size, o.rotation, obTop(o), o.points]));
+  if (sig === structSig) return;
+  structSig = sig;
+  structCrest.fill(NaN);
+  for (const ob of act) {
+    const t = obTop(ob);
+    obstacleCells(ob, (c) => { if (!(structCrest[c] >= t)) structCrest[c] = t; });
+  }
+}
+// The share of the drift through flow cell (i, j) that a structure there stops.
+function structBlock(i, j) {
+  const c = IX(i, j);
+  if (solid[c]) return 1;
+  const crest = structCrest ? structCrest[c] : NaN;
+  if (!Number.isFinite(crest)) return 0;
+  const z = bedMeters(i * cellW, j * cellH), d = conditions.waterLevel - z;
+  if (d <= 0) return crest > z ? 1 : 0;
+  return Math.max(0, Math.min(1, (crest - z) / d));
+}
+
 // Per flow row, from the wave field: breaking height and angle at the outermost breaking cell,
 // and the share of the drift a structure lets past. The drift itself is longshoreQ().
 let HbAt = new Float64Array(NY + 2), alphaAt = new Float64Array(NY + 2);
@@ -1173,6 +1204,7 @@ let shoreShift = new Float64Array(NY + 2);     // m, seaward, from the longshore
  * the drift ran at the full rate next to a groyne for ever.
  */
 function computeLongshore() {
+  coastStructures();
   for (let j = 1; j <= NY; j++) {
     // The breaker height is the highest the wave stands before it breaks, at or seaward of the
     // first breaking cell, with its angle there. (It was the height in that cell, but breaking
@@ -1186,17 +1218,18 @@ function computeLongshore() {
       if (depthAt(i, j) <= 0.05) { iShore = i; break; }
     }
     hasBreak[j] = iBreak > 0 ? 1 : 0;
-    // No breaking in a row a structure crosses: it covers the whole surf zone.
-    let anySolid = false;
-    if (iBreak < 0) for (let i = 1; i <= NX && !anySolid; i++) anySolid = solid[IX(i, j)] === 1;
-    passShare[j] = anySolid ? 0 : 1;
+    // No breaking in a row a structure crosses: it covers the whole surf zone, and passes what
+    // its lowest point lets over (nothing, for one standing out of the water).
+    let block = 0;
+    if (iBreak < 0) for (let i = 1; i <= NX && block < 1; i++) block = Math.max(block, structBlock(i, j));
+    passShare[j] = 1 - block;
     if (iBreak > 0 && iShore > iBreak) {
       let all = 0, open = 0;
       const n = iShore - iBreak;
       for (let i = iBreak; i < iShore; i++) {
         const w = Math.sin(Math.PI * (i - iBreak + 0.5) / n);
         all += w;
-        if (!solid[IX(i, j)]) open += w;
+        open += w * (1 - structBlock(i, j));
       }
       passShare[j] = all > 0 ? open / all : 1;
     }
@@ -1733,6 +1766,7 @@ registerModel({
     // What an object does here (the river's version promises a lee, which the coast has not).
     { id: 'coast-objects', after: 'draw', target: guideCanvas, title: 'What an object does', text:
       `<p>Then watch. On a beach an object changes how the waves carry sand along the shore. A groyne, a low wall built out into the water, holds back the sand coming from the side the waves arrive from. The beach builds up on that side and wears away on the other. The farther it reaches out across the breaking waves, the more it holds, until the sand piled against it reaches the tip of the groyne and starts to pass around it again.</p>
+       <p>A groyne has a height slider too, beside it when it is selected. It sets the crest, measured from datum, the model's mean sea level. While the water stands below the crest the groyne casts a shadow in the waves and holds back the sand moving along the shore. A low crest or a storm surge puts it under the water, and then the waves pass over it and some of the sand gets across.</p>
        <p>The waves here do not bend around the object or calm down behind it, so there is no sheltered patch in its lee.</p>` },
     { id: 'coast-view', after: 'toggles', target: ['#toggle-waves', '#toggle-smooth'], title: 'Waves and the wash', text:
       `<p><b>waves</b> draws the wave crests the model works out. They close up as the water gets shallow, bend as they come in at an angle, and turn white where the model has them breaking. Where a groyne or a breakwater stands there is a gap in the crests.</p>
@@ -1949,7 +1983,15 @@ registerModel({
   timeline: { duration: 20, objectDuration: 5, min: 5, max: 100, step: 5 },
 
   // A nourishment is sand placed on the bed: the waves pass over it and it feeds the profile.
-  isSolid(ob) { return (ob.kind || 'structure') !== 'nourish'; },
+  // A structure is solid while its crest stands above the water (see structBlock()).
+  isSolid(ob) { return (ob.kind || 'structure') !== 'nourish' && obTop(ob) > conditions.waterLevel; },
+  objectHeight: {
+    default: STRUCT_TOP_M, min: -3, max: 5, step: 0.1,
+    applies: (ob) => (ob.kind || 'structure') !== 'nourish',
+    label: (t) => Math.abs(t) < 0.05 ? 'crest at datum' : `crest ${Math.abs(t).toFixed(1)} m ${t > 0 ? 'above' : 'below'} datum`,
+    note: (t) => t > conditions.waterLevel ? 'Above the water now. It holds back the waves and the sand along the shore.'
+      : `The water stands at ${conditions.waterLevel.toFixed(1)} m now, over the crest. Waves pass over it and part of the sand gets across.`,
+  },
   makeObstacle(type, x, y, rot) {
     if (type !== 'nourish') return null;
     return { type: 'rect', kind: 'nourish', x, y, w: ghostSize, h: ghostSize * 0.6,

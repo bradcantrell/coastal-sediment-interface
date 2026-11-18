@@ -106,16 +106,19 @@ function zipStore(files) {
 
 /** Bed level at an XBeach grid corner, metres, positive up. */
 // A structure (groyne, breakwater, seawall) as XBeach sees it: a cell of the case grid that
-// lies in a solid object of the scene. It is written as hard ground, raised to at least
-// XB_STRUCT_CREST_M above the water level and with no erodible sand (ne_layer 0). The export
-// used to leave every structure out (2026-11-17 stress test).
-const XB_STRUCT_CREST_M = 3.0;
-function xbSolidAt(i, j) {
+// lies in a structure of the scene. It is written as hard ground, raised to the structure's
+// crest (its height slider, metres above datum) and with no erodible sand (ne_layer 0), so a
+// surge over the crest overtops it in XBeach as in the model. The export used to leave every
+// structure out (2026-11-17 stress test), then raised every one to 3 m above the water, as in
+// the groyne reference runs (dev/xbeach-groyne-reference.json), until heights came in
+// (2026-11-18). Returns the crest, or NaN.
+function xbCrestAt(i, j) {
   const px = i * (REACH_CROSSSHORE / XB_NX) * (width / REACH_CROSSSHORE);
   const py = j * (REACH_ALONGSHORE / XB_NY) * (height / REACH_ALONGSHORE);
-  const fi = Math.max(0, Math.min(NX + 1, Math.round(px / cellW)));
-  const fj = Math.max(0, Math.min(NY + 1, Math.round(py / cellH)));
-  return solid[IX(fi, fj)] === 1;
+  const fi = Math.max(1, Math.min(NX, Math.round(px / cellW)));
+  const fj = Math.max(1, Math.min(NY, Math.round(py / cellH)));
+  coastStructures();
+  return structCrest[IX(fi, fj)];
 }
 
 function xbBedAt(i, j) {
@@ -211,7 +214,7 @@ function buildXBeach(opts) {
   buildSolidMask();
   let nStruct = 0;
   const hard = [];
-  for (let j = 0; j <= XB_NY; j++) { const r = []; for (let i = 0; i <= XB_NX; i++) { const h = xbSolidAt(i, j); r.push(h); if (h) nStruct++; } hard.push(r); }
+  for (let j = 0; j <= XB_NY; j++) { const r = []; for (let i = 0; i <= XB_NX; i++) { const h = xbCrestAt(i, j); r.push(h); if (Number.isFinite(h)) nStruct++; } hard.push(r); }
   if (nStruct) {
     L.push('%%% Structures: hard cells in ne_layer.dep (0 m of erodible sand) %%%');
     L.push('struct    = 1');
@@ -243,13 +246,13 @@ function buildXBeach(opts) {
     const vals = [];
     for (let i = 0; i <= XB_NX; i++) {
       const z = xbBedAt(i, j);
-      vals.push((hard[j][i] ? Math.max(z, conditions.waterLevel + XB_STRUCT_CREST_M) : z).toFixed(4));
+      vals.push((Number.isFinite(hard[j][i]) ? Math.max(z, hard[j][i]) : z).toFixed(4));
     }
     rows.push(vals.join(' '));
   }
   const bed = rows.join('\n') + '\n';
   // erodible sand thickness: none in a structure, more than the model can move elsewhere
-  const neLayer = nStruct ? hard.map(r => r.map(h => (h ? 0 : 10).toFixed(1)).join(' ')).join('\n') + '\n' : null;
+  const neLayer = nStruct ? hard.map(r => r.map(h => (Number.isFinite(h) ? 0 : 10).toFixed(1)).join(' ')).join('\n') + '\n' : null;
 
   // ---------------- jonswap.txt
   const J = [];
@@ -333,7 +336,7 @@ function xbReadme(p, hours, morfac) {
     '    jonswap.txt  the wave spectrum at the offshore boundary',
   ].concat(p.neLayer ? [
     '    ne_layer.dep the erodible sand over each cell, same layout as bed.dep: 0 in the ' + p.nStruct + ' cells',
-    '                 of structures (raised to ' + XB_STRUCT_CREST_M + ' m above the water level in bed.dep), 10 m elsewhere',
+    '                 of structures (raised to their crests in bed.dep), 10 m elsewhere',
   ] : []).concat([
     '    run.sh, run.bat   run the case',
     '    scene.json   the scene itself, for the interface',

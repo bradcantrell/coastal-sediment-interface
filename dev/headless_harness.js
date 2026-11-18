@@ -873,6 +873,24 @@ app.resetMorph();
         `largest long ${y2.long.toFixed(2)} m, morph ${y2.morph.toFixed(2)} m`);
   check(y2.long - y1.long < y1.long, "the fillet slows as it fills", `+${y1.long.toFixed(2)} m in year 1, +${(y2.long - y1.long).toFixed(2)} m in year 2`);
 
+  // A groyne's crest (Brad, 2026-11-18: groynes work like the river's objects). Standing out
+  // of the water it stops the drift in its row and the waves; under the water the waves pass
+  // and it stops the share of the column below its crest; buried below the bed it does
+  // nothing. A surge over the crest of a standing one turns it into the second kind.
+  {
+    const share = (top, wl) => {
+      setup(zone.b - 40);
+      app.run(`obstacles[0].top = ${top}; conditions.waterLevel = ${wl}; solidMaskDirty = true`);
+      app.waveFieldStep(); app.run("computeLongshore()");
+      return app.run(`(() => { const j = Math.round(0.5 * height / cellH); let n = 0; for (let k = 0; k < solid.length; k++) n += solid[k];
+        return { pass: passShare[j], solid: n }; })()`);
+    };
+    const up = share(0.5, 0), low = share(-0.6, 0), buried = share(-30, 0), surge = share(0.5, 1.0);
+    check(up.pass === 0 && up.solid > 0 && low.solid === 0 && low.pass > 0.05 && low.pass < 0.95 && buried.pass === 1 && surge.solid === 0 && surge.pass > 0 && surge.pass < 1,
+      "a groyne's crest sets what it stops: all of it out of the water, part of it under, none buried",
+      `drift passing its row: crest +0.5 m ${up.pass.toFixed(3)} (${up.solid} solid cells), -0.6 m ${low.pass.toFixed(3)} (${low.solid}), buried ${buried.pass.toFixed(3)}; a 1 m surge over +0.5 m ${surge.pass.toFixed(3)} (${surge.solid})`);
+  }
+
   setup(null);
   app.run(`(() => { const s = ${saved}; Object.assign(conditions, s.c); modelDaysPerSec = s.r; modelYears = s.y; obstacles.length = 0;
     if (s.dt === null) delete globalThis.deltaTime; else globalThis.deltaTime = s.dt; })()`);   // the frames after this use the page's own frame time

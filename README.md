@@ -84,6 +84,12 @@ divergence. This is a one-line shoreline model:
   sin-shaped from the breaker line to the shoreline, and a structure stops the share in the
   cells it covers. A short groyne holds back part of the drift, one past the breakers nearly
   all of it, and once its fillet has moved the shore seaward of its tip, sand passes again.
+- **A structure has a crest.** A slider beside a selected structure sets it, in metres above
+  datum (0.5 by default). While the water stands below the crest the structure stops the waves
+  and the drift through its cells. When the water is over it, from a storm surge or a low
+  crest, the waves pass and it holds back only the part of the water column below its crest.
+  A groyne across the surf zone with its crest 0.6 m under the water lets 39% of the drift
+  past it.
 
 Before 2026-11-17 a groyne blocked all or nothing, switching where its tip passed the outer
 breaker, and next to one the cross-shore and longshore layers grew against each other by about
@@ -294,8 +300,8 @@ equal morphological time (10 d): correlation 0.986 over 55 cells
 amplitude at equal time: 1.614 vs xbeach 1.792 m (ratio 0.90)
 ```
 
-112 checks. 111 pass on a slower machine; the one failure is a frame-time limit recorded on a faster
-machine.
+124 checks. On a busy machine the frame-time limit can fail, since it was recorded with nothing
+else running.
 
 Note: extracting the script and running `node --check` alone is **not** sufficient — it
 passes on a field that is silently empty. The behavioural checks are the real gate.

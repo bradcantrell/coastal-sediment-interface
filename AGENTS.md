@@ -96,6 +96,11 @@ The fluvial Stam solver is **gone**. In its place, one analytic pass per frame:
 - `computeLongshore()` / `applyLongshore()` — one-line shoreline model (2026-11-17). Per row:
   breaking height and angle, and `passShare`, the share of the drift a structure lets past
   (the drift spread sin-shaped across the surf zone, blocked in the cells a structure covers).
+  Every structure has a crest (`ob.top`, metres above datum, the height slider beside a
+  selected structure, default `STRUCT_TOP_M` 0.5; 2026-11-18). Above the live water level it
+  is solid. Under it, it is not: waves pass, and `structBlock()` stops the share of each
+  cell's water column below the crest (`structCrest`, from `coastStructures()`). The XBeach
+  export raises structures to their crests.
   `longshoreBase()` puts the waves' drift on the faces between rows (`qFace`) with the smaller
   pass share of the two rows; `longshoreShift()` is each row's shoreline shift from the
   longshore layer's volume over the active height; `longshoreQ()` subtracts
@@ -291,8 +296,8 @@ zero, so the bed does not lurch on load.
 ## Testing
 
 ```
-node dev/headless_harness.js index.html      # the coastal model and the export: 112 checks
-node dev/interface_harness.js index.html     # the shared interface under this model: 74 checks
+node dev/headless_harness.js index.html      # the coastal model and the export: 124 checks
+node dev/interface_harness.js index.html     # the shared interface under this model: 76 checks
 ```
 
 Run both. `headless_harness.js` is this repo's; it loads the page the way a browser does

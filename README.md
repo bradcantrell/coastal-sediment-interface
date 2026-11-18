@@ -44,8 +44,9 @@ See `PLAN.md` for the full design and the phase gates.
 | Dune | Waves cut up to 0.15·Hs above the water; behind that the bed slumps at 0.3 (wet) or 1.0 (dry) |
 | Dune recovery | Wind moves sand from the dry beach to a cut dune at a set rate (default 10 m³/m/yr), in calm only |
 | Alongshore spreading | The same diffusion run along the shore over the wet bed, stopped by structures |
-| Longshore | CERC, Q = K/(16(s−1))·Hb^2.5/√γ·sin(2αb), with αb measured against the local shoreline (one-line feedback) |
-| Bed change | dz/dt = −(1/(1−p))·(dQ/dy)/W_active, over the active profile from the depth of closure to the berm top |
+| Longshore | CERC, Q = K/(16(s−1))·√(g/γ)·Hb^2.5·sin(2αb), with αb measured against the local shoreline (one-line feedback) |
+| Bed change | dz/dt = −G·(1/(1−p))·(dQ/dy)/W_active, over the active profile from the depth of closure to the berm top; G = 0.0096 is the **longshore** slider, which slows CERC to the pace of the cross-shore model and the XBeach runs |
+| Time step | The bed takes steps of at most 1 model hour, so a storm cuts the same at any rate setting or frame rate |
 
 **Not modelled:** diffraction and sheltering (a structure stops waves only in its own cells; the shoreward
 march carries the wave height past it, so there is no shadow behind it, measured 2026-11-15), infragravity, erosion of
@@ -128,7 +129,7 @@ The archive is verified with Python's `zipfile` — `testzip()` reports all CRCs
 
 ### Running it
 
-Built and run on this machine with MSYS2 + gfortran 16.2.0, serial, no MPI, no netCDF. The
+Built and run with MSYS2 on Windows + gfortran 16.2.0, serial, no MPI, no netCDF. The
 whole recipe is scripted:
 
 ```
@@ -292,7 +293,7 @@ equal morphological time (10 d): correlation 0.986 over 55 cells
 amplitude at equal time: 1.614 vs xbeach 1.792 m (ratio 0.90)
 ```
 
-110 checks. 109 pass on a slower machine; the one failure is a frame-time limit recorded on a faster
+112 checks. 111 pass on a slower machine; the one failure is a frame-time limit recorded on a faster
 machine.
 
 Note: extracting the script and running `node --check` alone is **not** sufficient — it

@@ -911,6 +911,18 @@ calm beach keeps its waterline; grains settle only in the water. The first and t
 were shown to fail with the code they cover broken. Frame time rose from about 91 to 107 ms
 on the test machine (the substeps and the active-profile scan).
 
+## Stress-test step 5 (bed substeps, conv, CERC sqrt(g), D50 seeding): 80.4 (unchanged)
+
+The page's bed now steps at most 1 h at a time (`advanceBed`); the score's runs call
+`morphologyStep` with their own steps and are untouched. CERC gained its sqrt(g) and the gain
+fell by the same factor (0.03 -> 0.0096, 0.2% rounding), the default bed is built for the D50
+at the start of a run, wave bins at 90 deg or more are dropped (none of the reference cases
+have any). The score output is the same to every printed digit.
+
+Measured on the storm case, 48 h: the cut is 17.6 / 19.6 / 20.5 / 21.1 / 21.4 / 21.5 m3/m at
+4 / 2 / 1 / 0.5 / 0.25 / 0.125 h steps, so the page at 1 h is within 5% of converged; a whole
+day in one unsplit step used to cut 8.0 where quarter-hour steps cut 15.0.
+
 ## Future work, marked 2026-11-14: a bar and a trough
 
 Not started. The deposit is a ramp, highest next to the beach; XBeach's is a detached bar.

@@ -40,6 +40,7 @@ let modelYears = 0;           // elapsed model time: the clock the timeline and 
  * Sections are fractions of the canvas height (y=0 offshore, y=height landward).
  * Replaced by the coastal-conditions panel once Phase 1 lands.
  */
+let bedSeedD50 = null;
 function defaultCoastalBedZ(x, y) {
   // Cross-shore runs along x: offshore at x=0 (left), dune at x=width (right).
   // Waterline lands at 0.74 of the width, in the right third.
@@ -54,7 +55,10 @@ function defaultCoastalBedZ(x, y) {
   // Datum, NOT the live water level. Water rises over a fixed bed; if the profile followed
   // conditions.waterLevel a surge would lift the seabed with it and erode nothing.
   const wl = 0;
-  const A  = deanA(conditions.d50);
+  // The grain size the beach was built for. The D50 slider used to rebuild the whole seabed
+  // the moment it moved, with no sand budget and nothing in the change overlay; it now changes
+  // how the sand moves, and clear builds the beach again for it (2026-11-17 stress test).
+  const A  = deanA(bedSeedD50 != null ? bedSeedD50 : conditions.d50);
 
   if (Y >= 0) {                                     // shoreface: Dean h = A y^(2/3)
     return (wl - A * Math.pow(Y, 2 / 3)) / M_PER_BED_UNIT;
@@ -300,13 +304,14 @@ function buildComponents() {
     const t = (i - (n - 1) / 2) / ((n - 1) / 2);            // -1 .. 1
     const offset = t * 1.5 * sigma;                          // +/- 1.5 sigma
     const w = Math.exp(-0.5 * Math.pow(t * 1.5, 2));         // Gaussian in bin space
-    out.push({
-      Hs: conditions.Hs, Tp: conditions.Tp,
-      dirDeg: conditions.dirDeg + offset * 180 / Math.PI,
-      weight: w,
-    });
+    const dirDeg = conditions.dirDeg + offset * 180 / Math.PI;
+    // A bin at 90 deg or more is heading out to sea, not arriving: left out, as XBeach does.
+    // (They were folded back as arriving waves, 39% of the energy at dir 80 / spread 45.)
+    if (Math.abs(dirDeg) >= 90) continue;
+    out.push({ Hs: conditions.Hs, Tp: conditions.Tp, dirDeg, weight: w });
     wsum += w;
   }
+  if (!out.length) return [{ Hs: conditions.Hs, Tp: conditions.Tp, dirDeg: Math.max(-89, Math.min(89, conditions.dirDeg)), weight: 1 }];
   for (const c of out) c.weight /= wsum;
   return out;
 }
@@ -529,7 +534,14 @@ let shoreRef = null, refWaterLevel = 0;   // per alongshore row (GH)
  * +0.08 m. The capped-slope target does not have that problem, since the terrace lies far
  * below the beach wherever the origin is.
  */
+// The waterline the target hangs from is found again when the drawn bed is edited. It was kept
+// until clear: a beach drawn after the model had run stayed tied to a waterline about 94 m
+// away and cut three times too much in calm water (2026-11-17 stress test). Read from the
+// drawn bed itself, so the every-8-frames bed refresh does not count as an edit.
+let shoreSig = '';
+function drawnBedSig() { return JSON.stringify(bedPoints) + JSON.stringify(bedXSections) + bedSeedD50; }
 function shoreRefAt(gy) {
+  if (gy === 0) { const sig = drawnBedSig(); if (sig !== shoreSig) { shoreSig = sig; shoreRef = null; } }
   if (!shoreRef || refWaterLevel !== conditions.waterLevel) {
     if (!shoreRef) shoreRef = new Float32Array(GH);
     refWaterLevel = conditions.waterLevel;
@@ -655,39 +667,58 @@ const CONV_TOL_BAR_M  = 5.0;
 
 const CONV_TOL_MEAN_M = 0.05;
 
+// And no cell more than a quarter of a metre apart: an average over the whole grid hides a
+// difference of metres in one place (beside a groyne, say).
+const CONV_TOL_MAX_M = 0.25;
+
 let convLast    = null;   // { dt, dBar, dMeanM, dMaxM, steps }
 
 let lastDtModel = 0;      // the dt the last draw actually used, in model seconds
 
 
-/** Integrate `steps` of dtModel twice, at dt and dt/2, and report the difference. */
+/**
+ * Integrate `steps` frames of dtModel twice, at dt and at dt/2, and report the difference.
+ * It runs what a frame runs (waves, then advanceBed(): cross-shore, drift, nourishment, with
+ * its substeps), on the whole moved bed, and judges on the largest local difference as well
+ * as the mean. Everything it touches is put back. (It used to step the cross-shore layer
+ * alone and average over 60,000 cells, so it passed while the beds differed by about a metre,
+ * or by metres beside a groyne, and it left the readouts overwritten. 2026-11-17.)
+ */
 function convergenceProbe(dtModel, steps) {
   if (!morphGrid || !morphEnabled || !(dtModel > 0)) return null;
-  const snap = Float32Array.from(morphGrid);
+  const keep = { morph: Float32Array.from(morphGrid), long: Float32Array.from(longGrid), pick: pickGrid ? Float32Array.from(pickGrid) : null,
+                 brk: Float32Array.from(waveBreaking), shoreRef: shoreRef ? Float32Array.from(shoreRef) : null, refWaterLevel,
+                 er: lastMaxErosion, ac: lastMaxAccretion, bar: barDistanceM, storm: stormNow, qPeak, qMean, years: modelYears, last: lastDtModel };
+  const restore = () => {
+    morphGrid.set(keep.morph); longGrid.set(keep.long); if (keep.pick) pickGrid.set(keep.pick);
+    waveBreaking.set(keep.brk); shoreRef = keep.shoreRef ? Float32Array.from(keep.shoreRef) : null; refWaterLevel = keep.refWaterLevel;
+  };
   const runAt = function (dt, n) {
-    morphGrid.set(snap);
-    for (let k = 0; k < n; k++) morphologyStep(dt);
+    restore();
+    for (let k = 0; k < n; k++) { waveFieldStep(); advanceBed(dt); }
     computeBarDistance();
-    return { bar: barDistanceM, bed: Float32Array.from(morphGrid) };
+    const bed = new Float32Array(morphGrid.length);
+    for (let q = 0; q < bed.length; q++) bed[q] = morphGrid[q] + longGrid[q];
+    return { bar: barDistanceM, bed };
   };
   const coarse = runAt(dtModel, steps);
   const fine   = runAt(dtModel / 2, steps * 2);
-  morphGrid.set(snap);                 // leave the live bed exactly as we found it
-  computeBarDistance();
+  restore();                          // leave the live bed and the readouts as we found them
+  lastMaxErosion = keep.er; lastMaxAccretion = keep.ac; barDistanceM = keep.bar; stormNow = keep.storm;
+  qPeak = keep.qPeak; qMean = keep.qMean; modelYears = keep.years; lastDtModel = keep.last;
+  waveFieldStep(); waveBreaking.set(keep.brk);
 
-  // Compare the beds in metres. Not as a percentage of total volume: morphGrid is a
-  // perturbation field that sums to about zero, so a ratio to its sum divides by noise.
+  // Compare the beds in metres. Not as a percentage of total volume: the layers are
+  // perturbation fields that sum to about zero, so a ratio to their sum divides by noise.
   //
   // Interior only. The outer row and column of the grid sit off-canvas, and bedZ() clamps
   // them to their neighbours, so they act as a zero-gradient (Neumann) boundary condition.
-  // That is a legitimate choice, but those cells converge less well than the interior: at
-  // 0.8 h per step they disagree between dt and dt/2 by up to 4.6 m while every interior
-  // cell agrees to 1 mm. Measuring them together reports the boundary's noise as if it were
-  // the model's. Removing the row instead of measuring around it drops the precision score
-  // 62.6 -> 53.9, so the edge is load-bearing and must not be "fixed" casually.
+  // That is a legitimate choice, but those cells converge less well than the interior.
+  // Removing the row instead of measuring around it drops the precision score 62.6 -> 53.9,
+  // so the edge is load-bearing and must not be "fixed" casually.
   let sumAbs = 0, maxAbs = 0, n = 0;
-  for (let gy = 0; gy < GH - 1; gy++) {
-    for (let gx = 0; gx < GW - 1; gx++) {
+  for (let gy = 1; gy < GH - 1; gy++) {
+    for (let gx = 1; gx < GW - 1; gx++) {
       const k = gy * GW + gx;
       const d = Math.abs(fine.bed[k] - coarse.bed[k]) * M_PER_BED_UNIT;
       sumAbs += d;
@@ -707,11 +738,32 @@ function convergenceProbe(dtModel, steps) {
 
 function convVerdict(c) {
   if (!c) return null;
-  const ok = c.dBar <= CONV_TOL_BAR_M && c.dMeanM <= CONV_TOL_MEAN_M;
+  const ok = c.dBar <= CONV_TOL_BAR_M && c.dMeanM <= CONV_TOL_MEAN_M && c.dMaxM <= CONV_TOL_MAX_M;
   return (ok ? '\u2713 ' : '\u2717 ') +
-         '\u0394bar ' + c.dBar.toFixed(0) + ' m  \u0394bed ' + c.dMeanM.toFixed(3) + ' m';
+         '\u0394bar ' + c.dBar.toFixed(0) + ' m  \u0394bed ' + c.dMeanM.toFixed(3) + ' m, most ' + c.dMaxM.toFixed(2) + ' m';
 }
 
+
+// The longest step the bed takes. One morphology step freezes the active window and solves
+// once, so the same storm cut 40 m3/m at 0.8 h steps and 32 at the rate slider's top (23 at
+// 16 fps), and dune erosion went to nothing (2026-11-17 stress test). Measured, 48 h of the
+// storm case cuts 17.6 / 19.6 / 20.5 / 21.1 / 21.4 / 21.5 m3/m at 4 / 2 / 1 / 0.5 / 0.25 /
+// 0.125 h steps: 1 h is within 5% of the converged cut, and the default frame (0.8 h) is
+// under it, so the default rate costs nothing extra.
+const MAX_BED_DT = 3600;
+
+/** The bed over dtModel seconds of model time: cross-shore, drift, nourishment, substepped. */
+function advanceBed(dtModel) {
+  if (!(dtModel > 0)) return;
+  const n = Math.max(1, Math.ceil(dtModel / MAX_BED_DT)), dt = dtModel / n;
+  for (let k = 0; k < n; k++) {
+    if (k > 0) computeBarDistance();
+    morphologyStep(dt);
+    computeLongshore();
+    applyLongshore(dt);
+    applyNourishment(dt);
+  }
+}
 
 /** One morphology step over dtModel seconds of model time. */
 let _morphScratch = null;
@@ -962,6 +1014,9 @@ function resetMorphology() {
   morphGrid.fill(0);
   if (longGrid) longGrid.fill(0);
   shoreRef = null;
+  bedSeedD50 = conditions.d50;       // the beach is built again for the grain size now set
+  // and the readouts start again with it (they kept the old run's numbers)
+  lastMaxErosion = 0; lastMaxAccretion = 0; qPeak = 0; qMean = 0; convLast = null;
   updateBedBuffer();
 }
 
@@ -988,7 +1043,10 @@ const POROSITY_LS = 0.40;
 
 let longGrid = null;
 
-let longshoreGain = 0.03;    // morphological rate multiplier for the alongshore term
+// Morphological rate multiplier for the alongshore term (the "longshore" slider): CERC as it
+// stands moves the bed far faster than this model's other terms and the XBeach runs. 0.0096 is
+// the old 0.03 over sqrt(g), now that the formula has its sqrt(g).
+let longshoreGain = 0.0096;
 
 let qLong = new Float32Array(NY + 2);
 
@@ -999,8 +1057,11 @@ let qPeak = 0, qMean = 0;    // m3/s
 /** CERC longshore transport rate, m3/s. alpha is the breaking angle in radians. */
 function cercQ(Hb, alpha) {
   if (Hb <= 0.02 || !isFinite(alpha)) return 0;
+  // Q = K / (16 (s-1)) * sqrt(g / gamma) * Hb^2.5 * sin(2 alpha). The sqrt(g) was missing, so
+  // the m3/s readouts were 3.13 times too low; the gain below was divided by the same factor,
+  // so the bed moves exactly as it did.
   return (CERC_K / (16 * (CERC_S - 1))) *
-         (Math.pow(Hb, 2.5) / Math.sqrt(breakerGamma)) *
+         Math.sqrt(GRAV / breakerGamma) * Math.pow(Hb, 2.5) *
          Math.sin(2 * alpha);
 }
 
@@ -1227,13 +1288,18 @@ function applyNourishment(dtModel) {
 
     const hw = obW(ob) / 2, hh = obH(ob) / 2;
     const dz = (NOURISH_RATE * dYears) / M_PER_BED_UNIT;
+    // In the object's own turned frame, so the sand lands inside the outline as drawn (the
+    // rotation used to be ignored). A circle is its round outline.
+    const a = -(ob.rotation || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a), rr = Math.max(hw, hh);
 
     for (let gy = 0; gy < GH; gy++) {
       const y = (gy + 0.5) * DEPO_CELL;
-      if (Math.abs(y - ob.y) > hh) continue;
+      if (Math.abs(y - ob.y) > rr * 1.5) continue;
       for (let gx = 0; gx < GW; gx++) {
         const x = (gx + 0.5) * DEPO_CELL;
-        if (Math.abs(x - ob.x) > hw) continue;
+        const dx = x - ob.x, dy = y - ob.y;
+        if (ob.type === 'circle') { if (dx * dx + dy * dy > hw * hw) continue; }
+        else { const rx = dx * ca - dy * sa, ry = dx * sa + dy * ca; if (Math.abs(rx) > hw || Math.abs(ry) > hh) continue; }
         const idx = gy * GW + gx;
         morphGrid[idx] += dz;
         if (morphGrid[idx] > 300) morphGrid[idx] = 300;
@@ -1446,7 +1512,7 @@ function coastalHud() {
   document.getElementById('ro-runup').textContent  = runupR2.toFixed(2);
   document.getElementById('ro-xi').textContent     = iribarren.toFixed(2);
   document.getElementById('ro-zone').textContent   =
-    (iribarren < 0.5 ? 'spilling' : iribarren < 1.5 ? 'plunging' : 'surging') +
+    (iribarren < 0.5 ? 'spilling' : iribarren < 3.3 ? 'plunging' : 'surging')   /* Battjes (1974), offshore xi */ +
     ' · ' + breakCount + ' breaking cells';
 }
 
@@ -1460,10 +1526,7 @@ function coastalStep() {
   lastDtModel = dtModel;
   modelYears += dtModel / (365 * 86400);
   computeBarDistance();
-  morphologyStep(dtModel);
-  computeLongshore();
-  applyLongshore(dtModel);
-  applyNourishment(dtModel);
+  advanceBed(dtModel);
   if (morphEnabled && (frameCount % 8 === 0)) updateBedBuffer();
 }
 
@@ -1578,6 +1641,10 @@ registerModel({
 
   // The coast's steps in the interface's guide (see THE GUIDE in index.html).
   guide: [
+    // What an object does here (the river's version promises a lee, which the coast has not).
+    { id: 'coast-objects', after: 'draw', target: guideCanvas, title: 'What an object does', text:
+      `<p>Then watch. On a beach an object changes how the waves carry sand along the shore. A groyne, a low wall built out into the water, holds back the sand coming from the side the waves arrive from. The beach builds up on that side and wears away on the other. The farther it reaches out across the breaking waves, the more it holds, until the sand piled against it reaches the tip of the groyne and starts to pass around it again.</p>
+       <p>The waves here do not bend around the object or calm down behind it, so there is no sheltered patch in its lee.</p>` },
     { id: 'coast-view', after: 'toggles', target: ['#toggle-waves', '#toggle-smooth'], title: 'Waves and the wash', text:
       `<p><b>waves</b> draws the wave crests the model works out. They close up as the water gets shallow, bend as they come in at an angle, and turn white where the model has them breaking. Where a groyne or a breakwater stands there is a gap in the crests.</p>
        <p><b>smooth</b> softens the colored wash that shows where the beach has changed. Warm colors show sand building up and blue shows it wearing away. Turn it off to see the cells the model works on.</p>` },
@@ -1590,7 +1657,7 @@ registerModel({
     { id: 'coast-waves', after: 'thumb', target: guideSection('reset-coastal', 'coastal-readout'), title: 'Waves and water', text:
       `<p>These are the conditions the beach faces. <b>preset</b> loads a set of them, a calm summer, a winter storm, the recovery after a storm, or SLR 2100, a calm summer with 0.9 meters of sea level rise. Moving any slider switches it back to custom.</p>
        <p><b>Hs</b> is the wave height, the average of the biggest third of the waves. <b>Tp</b> is the time between wave crests. Longer periods are swell from far away, and at the same height they carry more energy. <b>direction</b> is the angle the waves arrive from, where 0 is straight at the shore, and <b>spread</b> is how much that angle varies.</p>
-       <p><b>water level</b> is the tide or a storm surge, and <b>SLR</b> is sea level rise added on top. <b>D50</b> is the grain size of the sand in millimeters. Fine sand is about 0.2 and coarse sand about 1. <b>slope</b> is how steep the beach is.</p>
+       <p><b>water level</b> is the tide or a storm surge, and <b>SLR</b> is sea level rise added on top. <b>D50</b> is the grain size of the sand in millimeters. Fine sand is about 0.2 and coarse sand about 1. A new D50 changes how the sand moves. Press <b>clear</b> to build the beach again for that grain size. <b>runup slope</b> is the steepness of the beach face used only for the runup and ξ readouts. It does not reshape the beach you see.</p>
        <p>The blue lines read the result. How high the waves are where they break and how deep the water is there, how far up the beach they run (<b>runup R2</b>), and <b>ξ</b>, which says how they break, spilling gently on a flat beach or plunging and surging on a steep one.</p>` },
     { id: 'coast-morph', after: 'coast-waves', target: guideSection('reset-morph', 'morph-readout'), title: 'How the beach changes', text:
       `<p>This section is the beach changing shape over time. <b>model rate</b> is how many days of model time pass each second, so you can watch years go by in a minute. <b>dune</b> is how much sand the wind adds to the dune each year. <b>longshore</b> is how strongly the waves carry sand along the shore rather than up and down it.</p>
@@ -1601,7 +1668,7 @@ registerModel({
   ],
 
   // The bed is drawn on both sides of still water.
-  bed: { zMin: BED_Z_MIN, zMax: BED_Z_MAX, datumLabel: 'still water' },
+  bed: { zMin: BED_Z_MIN, zMax: BED_Z_MAX, datumLabel: 'still water', scale: M_PER_BED_UNIT, unit: 'm' },
   defaultBedZ: defaultCoastalBedZ,
   // z is the drawn bed plus deposit; the model adds what the waves have moved.
   bedTotal(z, x, y) { return z + morphZ(x, y) + longZ(x, y) + pickZ(x, y); },
@@ -1646,7 +1713,7 @@ registerModel({
 <div class="ctrl-row"><label>water level <span class="val" id="c-wl-val">0.00</span> m</label><input type="range" id="c-wl" min="-0.5" max="3" value="0" step="0.05"></div>
 <div class="ctrl-row"><label>SLR <span class="val" id="c-slr-val">0.00</span> m</label><input type="range" id="c-slr" min="0" max="2" value="0" step="0.05"></div>
 <div class="ctrl-row"><label>D50 <span class="val" id="c-d50-val">0.30</span> mm</label><input type="range" id="c-d50" min="0.08" max="2" value="0.3" step="0.01"></div>
-<div class="ctrl-row"><label>slope <span class="val" id="c-slope-val">0.020</span></label><input type="range" id="c-slope" min="0.005" max="0.15" value="0.02" step="0.005"></div>
+<div class="ctrl-row"><label>runup slope <span class="val" id="c-slope-val">0.020</span></label><input type="range" id="c-slope" min="0.005" max="0.15" value="0.02" step="0.005"></div>
 <div id="coastal-readout" style="font-size:9px;color:rgba(110,190,255,0.6);line-height:1.5;margin:4px 0 3px 0;font-variant-numeric:tabular-nums;">
   break <span id="ro-hb">–</span> m @ <span id="ro-db">–</span> m<br>
   runup R2 <span id="ro-runup">–</span> m &nbsp; &xi; <span id="ro-xi">–</span><br>
@@ -1656,7 +1723,7 @@ registerModel({
 <div class="sect-label">morphology <button class="reset-btn" id="btn-conv" title="run the same interval of model time at dt and at dt/2 and report how far the answer moves">conv</button> <button class="reset-btn" id="reset-morph">clear</button></div>
 <div class="ctrl-row"><label>model rate <span class="val" id="mrate-val">2.0</span> d/s</label><input type="range" id="m-rate" min="0.1" max="30" value="2" step="0.1"></div>
 <div class="ctrl-row"><label>dune <span class="val" id="dune-val">10</span> m&sup3;/m/yr</label><input type="range" id="m-dune" min="0" max="30" value="10" step="1"></div>
-<div class="ctrl-row"><label>longshore <span class="val" id="ls-val">0.03</span></label><input type="range" id="m-long" min="0" max="0.2" value="0.03" step="0.005"></div>
+<div class="ctrl-row"><label>longshore <span class="val" id="ls-val">0.0096</span></label><input type="range" id="m-long" min="0" max="0.06" value="0.0096" step="0.0002"></div>
 <div id="morph-readout" style="font-size:9px;color:rgba(255,190,120,0.6);line-height:1.5;margin:4px 0 3px 0;font-variant-numeric:tabular-nums;">
   erosion <span id="ro-er">0.00</span> m &nbsp; accretion <span id="ro-ac">0.00</span> m<br>
   storm <span id="ro-storm">0.00</span> &nbsp; breakpoint <span id="ro-bar">–</span> m<br>
@@ -1685,6 +1752,9 @@ registerModel({
         conditions.spreadDeg = g(CP.spread);
         conditions.waterLevel = g(CP.wl) + g(CP.slr);
         conditions.d50       = g(CP.d50);
+        // Before the run has started (a page load restoring its scene, or setting up) the beach
+        // is built for the grain size; once it runs, clear does that.
+        if (modelYears === 0) bedSeedD50 = conditions.d50;
         conditions.slope     = g(CP.slope);
         document.getElementById('c-hs-val').textContent    = conditions.Hs.toFixed(2);
         document.getElementById('c-tp-val').textContent    = conditions.Tp.toFixed(1);
@@ -1739,7 +1809,7 @@ registerModel({
       });
       document.getElementById('m-long').addEventListener('input', function(){
         longshoreGain = parseFloat(this.value);
-        document.getElementById('ls-val').textContent = longshoreGain.toFixed(3);
+        document.getElementById('ls-val').textContent = longshoreGain.toFixed(4);
       });
       document.getElementById('reset-morph').addEventListener('click', function(){ resetMorphology(); });
       {
@@ -1747,7 +1817,7 @@ registerModel({
         if (bconv) bconv.addEventListener('click', function () {
           bconv.blur();                       // keep Space and the other keys working
           const dt = lastDtModel > 0 ? lastDtModel : (16.7 / 1000) * modelDaysPerSec * 86400;
-          const res = convergenceProbe(dt, 40);
+          const res = convergenceProbe(dt, 12);   // 12 frames, waves and all: about two seconds
           bconv.textContent = res ? 'conv' : 'off';
         });
       }
@@ -1838,5 +1908,6 @@ registerModel({
   spawnParticle, respawnParticle,
   particleLost: grainLost,
   // R clears the deposits; the sand the grains took up goes with them.
-  restart() { if (pickGrid) pickGrid.fill(0); },
+  // R restarts the run: the model year and the timeline go back to the start too.
+  restart() { if (pickGrid) pickGrid.fill(0); modelYears = 0; },
 });

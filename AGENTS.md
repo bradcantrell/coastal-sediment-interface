@@ -111,6 +111,21 @@ The fluvial Stam solver is **gone**. In its place, one analytic pass per frame:
 march carries the wave height past it, so there is no shadow behind it, measured 2026-11-15), infragravity, erosion of the
 bed below the waterline by storm waves. Sea-level rise is basic: the target follows the water level.
 
+## Fixes from the 2026-11-17 stress test, step 5
+
+- `advanceBed(dt)`: cross-shore, drift and nourishment in steps of at most `MAX_BED_DT` (1 h, within 5% of the converged cut).
+  The same storm cut 40 m3/m at 0.8 h steps and 23 at 16 fps before. The score's own runs
+  call `morphologyStep` directly and are unaffected.
+- `convergenceProbe`: runs waves plus `advanceBed` at dt and dt/2 on morph + long, judges on
+  the mean and the largest cell (`CONV_TOL_MAX_M`), and restores everything it touched.
+- `shoreRefAt`: the anchor is found again when the drawn bed changes (`drawnBedSig`).
+- `bedSeedD50`: the grain size the default bed was built for; D50 reshapes the bed only
+  before the run starts or on clear.
+- CERC has its sqrt(g); `longshoreGain` 0.0096 (was 0.03 without it, same bed).
+- Bins at |dir| >= 90 are left out; nourishment respects rotation; R resets the year;
+  clear resets the readouts; slope is "runup slope"; the coast has its own objects step in
+  the guide; elevations show in metres (`model.bed.scale`).
+
 ## Bed model — three layers, and why
 
 `bedZ = userBedZ + depoZ + morphZ + longZ + pickZ`
@@ -267,8 +282,8 @@ zero, so the bed does not lurch on load.
 ## Testing
 
 ```
-node dev/headless_harness.js index.html      # the coastal model and the export: 110 checks
-node dev/interface_harness.js index.html     # the shared interface under this model: 73 checks
+node dev/headless_harness.js index.html      # the coastal model and the export: 112 checks
+node dev/interface_harness.js index.html     # the shared interface under this model: 74 checks
 ```
 
 Run both. `headless_harness.js` is this repo's; it loads the page the way a browser does

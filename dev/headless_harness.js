@@ -823,7 +823,7 @@ app.resetMorph();
 // grew against each other by about 11 m a year until both hit their clamps. These run the
 // whole coastalStep, as the page does, at half-day steps.
 {
-  const saved = app.run("JSON.stringify({ c: conditions, r: modelDaysPerSec, y: modelYears })");
+  const saved = app.run("JSON.stringify({ c: conditions, r: modelDaysPerSec, y: modelYears, dt: globalThis.deltaTime === undefined ? null : globalThis.deltaTime })");
   const setup = (tipX) => app.run(`
     Object.assign(conditions, { Hs: 2.0, Tp: 9, dirDeg: 20, spreadDeg: 0, waterLevel: 0, d50: 0.3, slope: 0.02 });
     modelDaysPerSec = 8.333; globalThis.deltaTime = 60;
@@ -871,7 +871,8 @@ app.resetMorph();
   check(y2.long - y1.long < y1.long, "the fillet slows as it fills", `+${y1.long.toFixed(2)} m in year 1, +${(y2.long - y1.long).toFixed(2)} m in year 2`);
 
   setup(null);
-  app.run(`(() => { const s = ${saved}; Object.assign(conditions, s.c); modelDaysPerSec = s.r; modelYears = s.y; obstacles.length = 0; })()`);
+  app.run(`(() => { const s = ${saved}; Object.assign(conditions, s.c); modelDaysPerSec = s.r; modelYears = s.y; obstacles.length = 0;
+    if (s.dt === null) delete globalThis.deltaTime; else globalThis.deltaTime = s.dt; })()`);   // the frames after this use the page's own frame time
   app.buildSolid();
   app.resetMorph();
 }
@@ -894,6 +895,8 @@ check(Math.abs(loopAt23 - 3.0) < 0.01, "loop wraps at the loop length", `${loopA
 app.resetMorph();
 const gateEKeep = { depo: Float32Array.from(app.getState().depo), pick: Float32Array.from(app.getState().pick) };
 app.getState().depo.fill(0); app.getState().pick.fill(0);
+// clips act only while the timeline is on (with it off every object is there)
+app.run("timelineEnabled = true");
 app.obstacles.length = 0;
 app.obstacles.push({ type: 'rect', x: 760, y: 400, w: 420, h: 24, rotation: 0,
                      clips: [{ start: 10, dur: 6 }] });   // groyne appears in year 10
@@ -926,6 +929,7 @@ check(activeBefore === 0, "object inactive before its clip", `${activeBefore} ac
 check(activeAfter === 1, "object active inside its clip", `${activeAfter} active`);
 check(Math.abs(beforeClip) < 0.01, "no bed response before the clip", beforeClip.toFixed(4));
 app.getState().depo.set(gateEKeep.depo); app.getState().pick.set(gateEKeep.pick);
+app.run("timelineEnabled = false");
 check(Math.abs(afterClip) > 0.01, "bed responds once the clip opens", afterClip.toFixed(4));
 
 // --- object vocabulary: nourishment adds sand, and is not solid
@@ -1090,6 +1094,69 @@ if (!process.env.SCORE) {
   const same = (a, b) => Math.abs(a[0] - b[0]) < 0.01 && Math.abs(a[1] - b[1]) < 0.01;
   check(r.ok && r.fin && same(r.m0, r.m1) && same(r.m0, r.l1), "a resize stretches the coast's moved bed with the scene",
         `layers sized ${r.ok}, finite ${r.fin}; mark at ${r.m0.map(v => v.toFixed(3)).join(",")} -> ${r.m1.map(v => v.toFixed(3)).join(",")} (cross-shore), ${r.l1.map(v => v.toFixed(3)).join(",")} (longshore)`);
+}
+
+// ============================================================ items from the 2026-11-17 stress test
+if (!process.env.SCORE) {
+  const r = JSON.parse(app.run(`(() => {
+    const out = {};
+    const keep = { c: Object.assign({}, conditions), y: modelYears, morph: morphGrid.slice(), long: longGrid.slice(), obs: obstacles.slice(),
+                   bp: JSON.stringify(bedPoints), xs: JSON.stringify(bedXSections), seed: bedSeedD50 };
+    // 30: bins heading out to sea are left out, the rest renormalised
+    Object.assign(conditions, { Hs: 1.5, Tp: 9, dirDeg: 80, spreadDeg: 45, waterLevel: 0 });
+    const comps = buildComponents();
+    out.bins = { n: comps.length, max: Math.max(...comps.map(c => Math.abs(c.dirDeg))), w: comps.reduce((a, c) => a + c.weight, 0) };
+    // 29: CERC with its sqrt(g)
+    out.cerc = cercQ(1, Math.PI / 4) / ((CERC_K / (16 * (CERC_S - 1))) * Math.sqrt(GRAV / breakerGamma));
+    // 17: one long step and many short ones give the same bed (substeps inside advanceBed)
+    Object.assign(conditions, { Hs: 3.4, Tp: 12, dirDeg: -28, spreadDeg: 18, waterLevel: 0.8 });
+    obstacles.length = 0; solidMaskDirty = true; resetMorphology(); waveFieldStep();
+    // what the storm cuts, in m3 per metre of shore (the measure the bug showed in)
+    const cut = () => { let v = 0; for (let q = 0; q < morphGrid.length; q++) if (morphGrid[q] < 0) v -= morphGrid[q]; return v * M_PER_BED_UNIT * (DEPO_CELL * REACH_CROSSSHORE / width) / GH; };
+    const snapM = morphGrid.slice(), snapL = longGrid.slice();
+    advanceBed(24 * 3600); const cOne = cut();
+    morphGrid.set(snapM); longGrid.set(snapL);
+    for (let k = 0; k < 96; k++) advanceBed(900); const cFine = cut();     // quarter-hour steps
+    morphGrid.set(snapM); longGrid.set(snapL);
+    morphologyStep(24 * 3600); const cRaw = cut();          // one step with no substeps, as it was
+    out.step = { one: cOne, fine: cFine, raw: cRaw };
+    // 28: D50 moved during a run leaves the bed; clear builds it for the new grain size
+    Object.assign(conditions, keep.c); resetMorphology();
+    modelYears = 1; const z0 = bedZ(width * 0.5, height * 0.5);
+    conditions.d50 = 0.8; const z1 = bedZ(width * 0.5, height * 0.5);
+    resetMorphology(); const z2 = bedZ(width * 0.5, height * 0.5);
+    out.d50 = { kept: z1 === z0, rebuilt: z2 !== z0 };
+    conditions.d50 = keep.c.d50; resetMorphology();
+    // 16: drawing a bed after a run finds the waterline again
+    shoreRefAt(0); const ref0 = shoreRef && shoreRef[100];
+    bedPoints = [{ x: width * 0.3, z: -60 }, { x: width * 0.6, z: 40 }]; rebuildUserBedGrid();
+    shoreRefAt(0); const ref1 = shoreRef && shoreRef[100];
+    out.anchor = { before: ref0, after: ref1 };
+    bedPoints = JSON.parse(keep.bp); bedXSections = JSON.parse(keep.xs); rebuildUserBedGrid();
+    // 35: a turned nourishment puts its sand inside its outline
+    morphGrid.fill(0);
+    obstacles.length = 0; obstacles.push({ type: 'rect', kind: 'nourish', x: width * 0.7, y: height * 0.5, w: 200, h: 30, rotation: 45, clips: [{ start: 0, dur: 1e6 }] });
+    applyNourishment(86400 * 30);
+    let inside = 0, outside = 0; const a = -45 * Math.PI / 180;
+    for (let gy = 0; gy < GH; gy++) for (let gx = 0; gx < GW; gx++) { const v = morphGrid[gy * GW + gx]; if (!v) continue;
+      const dx = (gx + 0.5) * DEPO_CELL - width * 0.7, dy = (gy + 0.5) * DEPO_CELL - height * 0.5;
+      const rx = dx * Math.cos(a) - dy * Math.sin(a), ry = dx * Math.sin(a) + dy * Math.cos(a);
+      if (Math.abs(rx) <= 100 + 3 && Math.abs(ry) <= 15 + 3) inside++; else outside++; }
+    out.nourish = { inside, outside };
+    // 37: R restarts the model year
+    modelYears = 3; model.restart(); out.year = modelYears;
+    Object.assign(conditions, keep.c); modelYears = keep.y; morphGrid.set(keep.morph); longGrid.set(keep.long);
+    obstacles.length = 0; for (const o of keep.obs) obstacles.push(o); solidMaskDirty = true; bedSeedD50 = keep.seed;
+    return JSON.stringify(out); })()`));
+  check(r.bins.max < 90 && Math.abs(r.bins.w - 1) < 1e-9 && r.bins.n < 7, "wave bins heading out to sea are left out", `${r.bins.n} bins kept, widest ${r.bins.max.toFixed(1)} deg, weights ${r.bins.w.toFixed(4)}`);
+  check(Math.abs(r.cerc - 1) < 1e-9, "CERC carries its sqrt(g)", `ratio to the full formula ${r.cerc.toFixed(6)}`);
+  // within 6%: 1 h steps are themselves about 4% short of the converged cut
+  check(Math.abs(r.step.one / r.step.fine - 1) < 0.06, "a day of storm in one frame cuts what quarter-hour steps cut",
+        `${r.step.one.toFixed(2)} vs ${r.step.fine.toFixed(2)} m3/m (one unsplit step, as before: ${r.step.raw.toFixed(2)})`);
+  check(r.d50.kept && r.d50.rebuilt, "D50 moved during a run leaves the bed, and clear builds it for the new sand", JSON.stringify(r.d50));
+  check(r.anchor.before !== r.anchor.after, "a bed drawn after a run moves the waterline the target hangs from", `${r.anchor.before} -> ${r.anchor.after} px`);
+  check(r.nourish.inside > 0 && r.nourish.outside === 0, "a turned nourishment lands inside its outline", `${r.nourish.inside} cells inside, ${r.nourish.outside} outside`);
+  check(r.year === 0, "R puts the model year back to the start", `year ${r.year}`);
 }
 
 // ============================================================ the grains move sand, they do not make it

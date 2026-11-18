@@ -58,6 +58,8 @@ function zipStore(files) {
     dv.setUint32(0, 0x04034b50, true);
     dv.setUint16(4, 20, true);
     dv.setUint16(8, 0, true);            // stored, no compression
+    // A valid DOS date, 1 January 1980 (it was 0, which unzip tools report as invalid)
+    dv.setUint16(10, 0, true); dv.setUint16(12, 0x0021, true);
     dv.setUint32(14, crc, true);
     dv.setUint32(18, size, true);
     dv.setUint32(22, size, true);
@@ -70,6 +72,7 @@ function zipStore(files) {
     cv.setUint32(0, 0x02014b50, true);
     cv.setUint16(4, 20, true);
     cv.setUint16(6, 20, true);
+    cv.setUint16(12, 0, true); cv.setUint16(14, 0x0021, true);
     cv.setUint32(16, crc, true);
     cv.setUint32(20, size, true);
     cv.setUint32(24, size, true);
@@ -150,7 +153,7 @@ function buildXBeach(opts) {
   // ---------------- params.txt
   const L = [];
   L.push('%%% XBeach case exported from the Coastal Sediment Interface');
-  L.push('%%% Bed elevations are positive UP (posdwn = -1).');
+  L.push('%%% Bed elevations are positive UP, posdwn -1.');   // no "=" in a comment: XBeach reads it as a key
   L.push('');
   L.push('%%% Grid parameters %%%');
   L.push('depfile   = bed.dep');
@@ -255,7 +258,9 @@ function buildXBeach(opts) {
   J.push('mainang = ' + dirToNautical(conditions.dirDeg).toFixed(1));
   J.push('gammajsp = 3.3');
   J.push('s = ' + spreadToS(conditions.spreadDeg).toFixed(1));
-  J.push('fnyq = 0.3');
+  // The spectrum's top frequency must lie above its peak: 0.3 Hz is below the peak of waves
+  // shorter than 3.3 s.
+  J.push('fnyq = ' + Math.max(0.3, 2 / Math.max(conditions.Tp, 0.5)).toFixed(3));
   const jonswap = J.join('\n') + '\n';
 
   return { params: params, bed: bed, jonswap: jonswap, neLayer: neLayer, nStruct: nStruct, nx: XB_NX, ny: XB_NY, tstop: tstop };

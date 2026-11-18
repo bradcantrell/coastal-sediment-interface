@@ -168,7 +168,7 @@ Mirror the siblings rather than invent:
 
 - **Single file**, `index.html`, no build step, p5.js from CDN. Same deployment (GitHub Pages).
 - **Dev/hosted split** as with tidal: edit dev, copy to hosted repo, push both.
-- **Headless test harness** — reuse the tidal pattern: extract the script, prepend p5 mocks, run under `node`. No browser screenshot harness on this box.
+- **Headless test harness** — reuse the tidal pattern: extract the script, prepend p5 mocks, run under `node`. No browser screenshot harness.
 - **Grid** — plan-form, UTM-free local metres, ~200 m alongshore × 250 m cross-shore at 2 m cells ≈ 25,000 cells.
 
 **Repo:** `bradcantrell/coastal-sediment-interface`, public, Pages on `main`.

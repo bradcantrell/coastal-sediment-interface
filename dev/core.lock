@@ -1,5 +1,5 @@
 # Written by dev/sync_core.sh. Do not edit.
 source bradcantrell/sediment-interface
-commit 8bd651ad48061f1da6c327926c6d5e7efe01e760
-sha256 12464158cd38c47873b0d579dad9a60468e11a1bd91ac4d248508c0c95f7fbb2 index.html
+commit 6be4b5377609321a0b90ee72aa81cc66408d5e1d
+sha256 4681ad382ecb1ba97d1e469d59031fef185c3ff7a6e03129da005bc36f73452d index.html
 sha256 ef984819d8e951d27f6e1f7e32a4e936e0299c86cc70ac781d0cc11434bad90f dev/interface_harness.js
